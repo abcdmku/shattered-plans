@@ -101,8 +101,13 @@ export default function App() {
 
   if (view === 'boot') {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4 text-sm uppercase tracking-[0.24em] text-slate-400">
-        Loading shell
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="font-display text-lg font-light uppercase tracking-[0.3em] text-accent/60">
+            Shattered Plans
+          </div>
+          <div className="mt-2 text-xs text-muted/40">Connecting</div>
+        </div>
       </div>
     );
   }

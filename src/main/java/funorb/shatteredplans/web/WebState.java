@@ -3,7 +3,12 @@ package funorb.shatteredplans.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import funorb.client.UserIdLoginCredentials;
 import funorb.shatteredplans.StringConstants;
+import funorb.shatteredplans.client.game.BuildFleetsEvent;
+import funorb.shatteredplans.client.game.CombatEngagementLog;
+import funorb.shatteredplans.client.game.CombatLogEvent;
+import funorb.shatteredplans.client.game.FleetRetreatEvent;
 import funorb.shatteredplans.client.game.PlayerStats;
+import funorb.shatteredplans.client.game.StellarBombEvent;
 import funorb.shatteredplans.client.game.TurnEventLog;
 import funorb.shatteredplans.game.BuildFleetsOrder;
 import funorb.shatteredplans.game.Force;
@@ -740,7 +745,26 @@ public final class WebState {
       OrdersSnapshot pendingOrders,
       List<ChatMessage> messages,
       List<String> eventLog,
+      List<ResolvedEventSnapshot> resolvedEvents,
       VictorySnapshot victory) {}
+  public record ResolvedEventSnapshot(
+      String kind,
+      Integer playerIndex,
+      Integer sourceIndex,
+      Integer targetIndex,
+      Integer systemIndex,
+      int quantity,
+      String projectType,
+      List<CombatantSnapshot> combatants,
+      Integer victorIndex,
+      int fleetsAtEnd,
+      int kills) {}
+  public record CombatantSnapshot(
+      Integer playerIndex,
+      Integer sourceIndex,
+      int fleetsAtStart,
+      int fleetsDestroyed,
+      int fleetsRetreated) {}
   public record GamePlayer(
       int index,
       String name,
@@ -915,6 +939,7 @@ public final class WebState {
     private final Set<BrowserSession> spectators = new LinkedHashSet<>();
     private final Deque<ChatEntry> messages = new ArrayDeque<>();
     private final List<String> eventLog = new ArrayList<>();
+    private final List<ResolvedEventSnapshot> resolvedEvents = new ArrayList<>();
     private ScheduledFuture<?> endTurnFuture;
     private long turnEndTimestamp;
     private int playersLeftBitmap;
@@ -1239,6 +1264,7 @@ public final class WebState {
       this.state.recalculatePlayerFleetProduction();
       this.eventLog.clear();
       turnEventLog.events.forEach(event -> this.eventLog.add(event.getClass().getSimpleName()));
+      this.rebuildResolvedEvents(turnEventLog);
       this.processTurnStart();
       this.scheduleTurnEnd();
     }
@@ -1367,6 +1393,7 @@ public final class WebState {
           pendingOrders,
           visibleMessages,
           List.copyOf(this.eventLog),
+          List.copyOf(this.resolvedEvents),
           new VictorySnapshot(
               Arrays.stream(this.state.victoryChecker.currentObjectiveLeaders())
                   .filter(Objects::nonNull)
@@ -1389,8 +1416,137 @@ public final class WebState {
           force.surplusResourceRanks == null ? new int[4] : Arrays.copyOf(force.surplusResourceRanks, force.surplusResourceRanks.length));
     }
 
+    private void rebuildResolvedEvents(final TurnEventLog turnEventLog) {
+      this.resolvedEvents.clear();
+
+      for (final TurnEventLog.Event event : turnEventLog.events) {
+        if (event instanceof final MoveFleetsOrder moveOrder) {
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "MOVE",
+              playerIndex(moveOrder.player),
+              moveOrder.source.index,
+              moveOrder.target.index,
+              moveOrder.target.index,
+              moveOrder.quantity,
+              null,
+              List.of(),
+              null,
+              0,
+              0));
+        } else if (event instanceof final CombatEngagementLog combatLog) {
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "COMBAT",
+              null,
+              null,
+              null,
+              combatLog.system.index,
+              combatLog.events.stream().mapToInt(combatant -> combatant.fleetsAtStart).sum(),
+              null,
+              combatLog.events.stream()
+                  .map(WebGameSession::combatantSnapshot)
+                  .toList(),
+              playerIndex(combatLog.victor),
+              combatLog.fleetsAtCombatEnd,
+              combatLog.totalKills));
+        } else if (event instanceof final ProjectOrder projectOrder) {
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "PROJECT",
+              playerIndex(projectOrder.player),
+              systemIndex(projectOrder.source),
+              systemIndex(projectOrder.target),
+              systemIndex(projectOrder.target != null ? projectOrder.target : projectOrder.source),
+              0,
+              resourceTypeName(projectOrder.type),
+              List.of(),
+              null,
+              0,
+              0));
+        } else if (event instanceof final StellarBombEvent bombEvent) {
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "PROJECT",
+              playerIndex(bombEvent.player),
+              null,
+              bombEvent.target.index,
+              bombEvent.target.index,
+              bombEvent.kill,
+              resourceTypeName(GameState.ResourceType.ENERGY),
+              List.of(),
+              null,
+              0,
+              bombEvent.kill));
+        } else if (event instanceof final FleetRetreatEvent retreatEvent) {
+          final int retreatQuantity = retreatEvent.quantities == null
+              ? 0
+              : Arrays.stream(retreatEvent.quantities).sum();
+
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "COLLAPSE",
+              playerIndex(retreatEvent.source.lastOwner),
+              retreatEvent.source.index,
+              null,
+              retreatEvent.source.index,
+              retreatQuantity,
+              null,
+              List.of(),
+              null,
+              0,
+              0));
+
+          if (retreatEvent.targets != null && retreatEvent.quantities != null) {
+            for (int i = 0; i < retreatEvent.targets.length; ++i) {
+              if (retreatEvent.quantities[i] <= 0) {
+                continue;
+              }
+              this.resolvedEvents.add(new ResolvedEventSnapshot(
+                  "RETREAT",
+                  playerIndex(retreatEvent.source.lastOwner),
+                  retreatEvent.source.index,
+                  retreatEvent.targets[i].index,
+                  retreatEvent.source.index,
+                  retreatEvent.quantities[i],
+                  null,
+                  List.of(),
+                  null,
+                  0,
+                  0));
+            }
+          }
+        } else if (event instanceof final BuildFleetsEvent buildEvent) {
+          this.resolvedEvents.add(new ResolvedEventSnapshot(
+              "BUILD",
+              playerIndex(buildEvent.player),
+              null,
+              buildEvent.system.index,
+              buildEvent.system.index,
+              buildEvent.quantity,
+              null,
+              List.of(),
+              null,
+              0,
+              0));
+        }
+      }
+    }
+
     private @Nullable StarSystem system(final int index) {
       return index >= 0 && index < this.state.map.systems.length ? this.state.map.systems[index] : null;
+    }
+
+    private static CombatantSnapshot combatantSnapshot(final CombatLogEvent combatEvent) {
+      return new CombatantSnapshot(
+          playerIndex(combatEvent.player),
+          systemIndex(combatEvent.source),
+          combatEvent.fleetsAtStart,
+          combatEvent.fleetsDestroyed,
+          combatEvent.fleetsRetreated);
+    }
+
+    private static @Nullable Integer playerIndex(final @Nullable Player player) {
+      return player == null ? null : player.index;
+    }
+
+    private static @Nullable Integer systemIndex(final @Nullable StarSystem system) {
+      return system == null ? null : system.index;
     }
 
     private static String resourceTypeName(final int type) {

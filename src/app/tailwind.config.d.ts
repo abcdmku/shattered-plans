@@ -4,25 +4,27 @@ declare const _default: {
         extend: {
             boxShadow: {
                 panel: string;
+                glow: string;
             };
             colors: {
-                ink: {
-                    950: string;
-                    900: string;
-                    800: string;
-                    700: string;
+                deep: string;
+                surface: {
+                    DEFAULT: string;
+                    strong: string;
+                    border: string;
                 };
-                sea: {
-                    400: string;
-                    500: string;
+                accent: {
+                    DEFAULT: string;
+                    mint: string;
+                    dim: string;
                 };
-                ember: {
-                    400: string;
-                    500: string;
-                };
+                danger: string;
+                ally: string;
+                muted: string;
             };
             fontFamily: {
-                sans: [string, string, string];
+                display: [string, string, string, string];
+                body: [string, string, string, string];
             };
         };
     };

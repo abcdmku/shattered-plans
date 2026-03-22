@@ -44,6 +44,12 @@ export const PROJECT_SHORT_LABELS: Record<string, string> = {
 };
 
 export const RESOURCE_LABELS = ['Metal', 'Biomass', 'Energy', 'Exotics'];
+export const RESOURCE_DISPLAY_META = [
+  { index: 3, label: 'Exotics', color: '#d05cff' },
+  { index: 1, label: 'Biomass', color: '#4edb7d' },
+  { index: 0, label: 'Metal', color: '#f3c457' },
+  { index: 2, label: 'Energy', color: '#56c9ff' }
+] as const;
 
 export const STAT_LABELS = [
   'Max fleet size',

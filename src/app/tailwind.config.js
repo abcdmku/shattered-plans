@@ -3,26 +3,28 @@ export default {
     theme: {
         extend: {
             boxShadow: {
-                panel: '0 20px 60px rgba(1, 6, 14, 0.35)'
+                panel: '0 12px 30px rgba(4, 6, 16, 0.5)',
+                glow: '0 0 20px rgba(116, 242, 255, 0.15)'
             },
             colors: {
-                ink: {
-                    950: '#040816',
-                    900: '#07111f',
-                    800: '#0c1c30',
-                    700: '#162946'
+                deep: '#070a14',
+                surface: {
+                    DEFAULT: 'rgba(17, 22, 34, 0.9)',
+                    strong: 'rgba(24, 30, 44, 0.94)',
+                    border: 'rgba(255, 255, 255, 0.08)'
                 },
-                sea: {
-                    400: '#5fe2d1',
-                    500: '#24bfae'
+                accent: {
+                    DEFAULT: '#74f2ff',
+                    mint: '#6cf7b2',
+                    dim: 'rgba(116, 242, 255, 0.15)'
                 },
-                ember: {
-                    400: '#ffb36b',
-                    500: '#ff8a3d'
-                }
+                danger: '#e6646e',
+                ally: '#48d589',
+                muted: '#8f9bb3'
             },
             fontFamily: {
-                sans: ['ui-sans-serif', 'system-ui', 'sans-serif']
+                display: ['Oxanium', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+                body: ['Chakra Petch', 'ui-sans-serif', 'system-ui', 'sans-serif']
             }
         }
     },

@@ -156,6 +156,28 @@ export interface VictorySnapshot {
   victors: number[];
 }
 
+export interface CombatantSnapshot {
+  playerIndex: number | null;
+  sourceIndex: number | null;
+  fleetsAtStart: number;
+  fleetsDestroyed: number;
+  fleetsRetreated: number;
+}
+
+export interface ResolvedEventSnapshot {
+  kind: 'MOVE' | 'RETREAT' | 'COLLAPSE' | 'BUILD' | 'PROJECT' | 'COMBAT';
+  playerIndex: number | null;
+  sourceIndex: number | null;
+  targetIndex: number | null;
+  systemIndex: number | null;
+  quantity: number;
+  projectType: string | null;
+  combatants: CombatantSnapshot[];
+  victorIndex: number | null;
+  fleetsAtEnd: number;
+  kills: number;
+}
+
 export interface GameDetail {
   id: string;
   kind: string;
@@ -179,6 +201,7 @@ export interface GameDetail {
   pendingOrders: OrdersSnapshot;
   messages: ChatMessage[];
   eventLog: string[];
+  resolvedEvents: ResolvedEventSnapshot[];
   victory: VictorySnapshot;
 }
 

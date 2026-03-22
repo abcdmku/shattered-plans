@@ -1,26 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   PROJECT_LABELS,
-  RESOURCE_LABELS,
-  STAT_LABELS,
+  RESOURCE_DISPLAY_META,
   colorFromInt,
   formatLabel,
-  isBitSet,
-  projectLabel,
-  shortProjectLabel
+  isBitSet
 } from '../../shared/game';
 import type {
   GameDetail,
-  GamePlayer,
   GameSummary,
   OrdersSnapshot,
-  ProjectOrderSnapshot,
   RoomDetail,
   SystemSnapshot
 } from '../../shared/types';
 import { ChatPanel } from '../../shared/ui/ChatPanel';
 import { Panel } from '../../shared/ui/Panel';
-import { GameBoard } from './GameBoard';
+import { GameBoard, type BoardHighlight } from './GameBoard';
 
 interface GameScreenProps {
   summary: GameSummary;
@@ -38,6 +33,52 @@ interface GameScreenProps {
   onAcceptAlliance: (targetPlayerIndex: number) => void;
 }
 
+type PlacementMode =
+  | 'NONE'
+  | 'BUILD_FLEET'
+  | 'MOVE_FLEET_DEST'
+  | 'DEFENSIVE_NET'
+  | 'TERRAFORM'
+  | 'STELLAR_BOMB'
+  | 'GATE_SRC'
+  | 'GATE_DEST';
+
+type ModifierState = 'default' | 'shift' | 'alt' | 'control';
+type MoveAdjustAction = 'increment' | 'decrement' | 'clear';
+
+const RESEARCH_DISPLAY_GOAL = 20;
+
+const PROJECT_PANEL_META = [
+  {
+    type: 'METAL' as const,
+    label: PROJECT_LABELS.METAL,
+    hint: 'Select a friendly system without a defense net.',
+    researchIndex: 0,
+    accent: 'var(--project-metal)'
+  },
+  {
+    type: 'BIOMASS' as const,
+    label: PROJECT_LABELS.BIOMASS,
+    hint: 'Select a friendly normal world to terraform.',
+    researchIndex: 1,
+    accent: 'var(--project-biomass)'
+  },
+  {
+    type: 'ENERGY' as const,
+    label: PROJECT_LABELS.ENERGY,
+    hint: 'Select a hostile or neutral system beside your border.',
+    researchIndex: 2,
+    accent: 'var(--project-energy)'
+  },
+  {
+    type: 'EXOTICS' as const,
+    label: PROJECT_LABELS.EXOTICS,
+    hint: 'Select a friendly anchor, then a remote non-neighbor endpoint.',
+    researchIndex: 3,
+    accent: 'var(--project-exotics)'
+  }
+] as const;
+
 function cloneOrders(orders: OrdersSnapshot): OrdersSnapshot {
   return {
     buildOrders: orders.buildOrders.map(order => ({ ...order })),
@@ -46,50 +87,123 @@ function cloneOrders(orders: OrdersSnapshot): OrdersSnapshot {
   };
 }
 
-function eventLabel(value: string): string {
-  return value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Event$/, '');
-}
-
 function findSystem(systems: SystemSnapshot[], index: number | null): SystemSnapshot | null {
-  if (index === null) {
-    return null;
-  }
+  if (index === null) return null;
   return systems.find(system => system.index === index) ?? null;
 }
 
 function updateBuildOrder(orders: OrdersSnapshot, systemIndex: number, quantity: number): OrdersSnapshot {
   const next = cloneOrders(orders);
   next.buildOrders = next.buildOrders.filter(order => order.systemIndex !== systemIndex);
-  if (quantity > 0) {
-    next.buildOrders.push({ systemIndex, quantity });
-  }
+  if (quantity > 0) next.buildOrders.push({ systemIndex, quantity });
   return next;
 }
 
 function updateMoveOrder(orders: OrdersSnapshot, sourceIndex: number, targetIndex: number, quantity: number): OrdersSnapshot {
   const next = cloneOrders(orders);
   next.moveOrders = next.moveOrders.filter(order => !(order.sourceIndex === sourceIndex && order.targetIndex === targetIndex));
-  if (quantity > 0) {
-    next.moveOrders.push({ sourceIndex, targetIndex, quantity });
-  }
+  if (quantity > 0) next.moveOrders.push({ sourceIndex, targetIndex, quantity });
   return next;
 }
 
-function updateProjectOrder(orders: OrdersSnapshot, project: ProjectOrderSnapshot | null): OrdersSnapshot {
+function updateProjectOrder(
+  orders: OrdersSnapshot,
+  project: { type: string; sourceIndex: number | null; targetIndex: number | null }
+): OrdersSnapshot {
   const next = cloneOrders(orders);
-  if (project) {
-    next.projectOrders = next.projectOrders.filter(order => order.type !== project.type);
-    next.projectOrders.push(project);
-  } else {
-    next.projectOrders = [];
-  }
+  next.projectOrders = next.projectOrders.filter(order => order.type !== project.type);
+  next.projectOrders.push(project);
   return next;
+}
+
+function removeProjectOrder(orders: OrdersSnapshot, type: string): OrdersSnapshot {
+  const next = cloneOrders(orders);
+  next.projectOrders = next.projectOrders.filter(order => order.type !== type);
+  return next;
+}
+
+function orderCount(orders: OrdersSnapshot): number {
+  return orders.buildOrders.length + orders.moveOrders.length + orders.projectOrders.length;
+}
+
+function moveOrderKey(sourceIndex: number, targetIndex: number): string {
+  return `${sourceIndex}:${targetIndex}`;
+}
+
+function buildStepSize(modifier: ModifierState, available: number): number {
+  if (available <= 0) return 0;
+  if (modifier === 'control') return available;
+  if (modifier === 'alt') return Math.min(5, available);
+  return 1;
+}
+
+function movePlacementSize(
+  modifier: ModifierState,
+  remainingGarrison: number,
+  minimumGarrison: number,
+  garrisonsCanBeRemoved: boolean
+): number {
+  const spareFleets = remainingGarrison - minimumGarrison;
+  let quantity = spareFleets <= 0 ? 1 : Math.ceil(spareFleets / 2);
+
+  if (modifier === 'control') {
+    quantity = spareFleets <= 0 ? remainingGarrison : spareFleets;
+  } else if (modifier === 'alt') {
+    quantity = 5;
+  } else if (modifier === 'shift') {
+    quantity = 1;
+  }
+
+  const immovableFleets = garrisonsCanBeRemoved ? 0 : minimumGarrison;
+  return Math.max(0, Math.min(quantity, remainingGarrison - immovableFleets));
+}
+
+function moveAdjustSize(
+  action: MoveAdjustAction,
+  modifier: ModifierState,
+  orderQuantity: number,
+  remainingGarrison: number,
+  minimumGarrison: number,
+  garrisonsCanBeRemoved: boolean
+): number {
+  if (action === 'clear') return -orderQuantity;
+
+  if (action === 'decrement') {
+    if (modifier === 'control') return -orderQuantity;
+    if (modifier === 'alt') return -Math.min(5, orderQuantity);
+    return -1;
+  }
+
+  const immovableFleets = garrisonsCanBeRemoved ? 0 : minimumGarrison;
+  const maxAddable = Math.max(0, remainingGarrison - immovableFleets);
+  if (modifier === 'control') return maxAddable;
+  if (modifier === 'alt') return Math.min(5, maxAddable);
+  return Math.min(1, maxAddable);
+}
+
+function modifierState(keys: { shift: boolean; alt: boolean; control: boolean }): ModifierState {
+  if (keys.control) return 'control';
+  if (keys.alt) return 'alt';
+  if (keys.shift) return 'shift';
+  return 'default';
+}
+
+function modifierCopy(modifier: ModifierState): string {
+  switch (modifier) {
+    case 'control':
+      return 'Ctrl: all';
+    case 'alt':
+      return 'Alt: 5';
+    case 'shift':
+      return 'Shift: 1';
+    default:
+      return 'Default: standard';
+  }
 }
 
 export function GameScreen({
   summary,
   detail,
-  roomDetail,
   connectionStatus,
   notice,
   onLeave,
@@ -97,500 +211,775 @@ export function GameScreen({
   onSetOrders,
   onEndTurn,
   onCancelEndTurn,
-  onResign,
   onRequestAlliance,
   onAcceptAlliance
 }: GameScreenProps) {
   const pendingSignature = useMemo(() => JSON.stringify(detail.pendingOrders), [detail.pendingOrders]);
   const [draftOrders, setDraftOrders] = useState<OrdersSnapshot>(() => cloneOrders(detail.pendingOrders));
   const [selectedSystemIndex, setSelectedSystemIndex] = useState<number | null>(detail.systems[0]?.index ?? null);
+  const [placementMode, setPlacementMode] = useState<PlacementMode>('NONE');
+  const [selectedForceId, setSelectedForceId] = useState<string | null>(null);
   const [armedMoveSource, setArmedMoveSource] = useState<number | null>(null);
   const [armedProjectType, setArmedProjectType] = useState<string | null>(null);
   const [projectSourceIndex, setProjectSourceIndex] = useState<number | null>(null);
-  const [statsPlayerIndex, setStatsPlayerIndex] = useState<number>(detail.localPlayerIndex ?? detail.players[0]?.index ?? 0);
+  const [selectedMoveOrderKey, setSelectedMoveOrderKey] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [modifierKeys, setModifierKeys] = useState({ shift: false, alt: false, control: false });
 
   useEffect(() => {
     setDraftOrders(cloneOrders(detail.pendingOrders));
+    setPlacementMode('NONE');
+    setSelectedForceId(null);
     setArmedMoveSource(null);
     setArmedProjectType(null);
     setProjectSourceIndex(null);
+    setSelectedMoveOrderKey(null);
   }, [detail.id, detail.turnNumber, pendingSignature]);
 
   useEffect(() => {
-    if (selectedSystemIndex !== null && detail.systems.some(system => system.index === selectedSystemIndex)) {
-      return;
-    }
+    if (selectedSystemIndex !== null && detail.systems.some(system => system.index === selectedSystemIndex)) return;
     setSelectedSystemIndex(detail.systems[0]?.index ?? null);
   }, [detail.systems, selectedSystemIndex]);
+
+  useEffect(() => {
+    const handleKeyState = (event: KeyboardEvent) => {
+      setModifierKeys({
+        shift: event.shiftKey,
+        alt: event.altKey,
+        control: event.ctrlKey || event.metaKey
+      });
+    };
+
+    const clearKeys = () => setModifierKeys({ shift: false, alt: false, control: false });
+
+    window.addEventListener('keydown', handleKeyState);
+    window.addEventListener('keyup', handleKeyState);
+    window.addEventListener('blur', clearKeys);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyState);
+      window.removeEventListener('keyup', handleKeyState);
+      window.removeEventListener('blur', clearKeys);
+    };
+  }, []);
+
+  const currentModifier = modifierState(modifierKeys);
+  const garrisonsCanBeRemoved = true;
+
+  const systemByIndex = useMemo(() => new Map(detail.systems.map(system => [system.index, system])), [detail.systems]);
+  const forceById = useMemo(() => new Map(detail.forces.map(force => [force.id, force])), [detail.forces]);
+
+  const forceIdBySystemIndex = useMemo(() => {
+    const mapping = new Map<number, string>();
+    detail.forces.forEach(force => {
+      force.systems.forEach(systemIndex => {
+        mapping.set(systemIndex, force.id);
+      });
+    });
+    return mapping;
+  }, [detail.forces]);
+
+  const remainingGarrisonBySystem = useMemo(() => {
+    const remaining = new Map<number, number>();
+    detail.systems.forEach(system => remaining.set(system.index, system.garrison));
+
+    draftOrders.buildOrders.forEach(order => {
+      remaining.set(order.systemIndex, (remaining.get(order.systemIndex) ?? 0) + order.quantity);
+    });
+
+    draftOrders.moveOrders.forEach(order => {
+      remaining.set(order.sourceIndex, (remaining.get(order.sourceIndex) ?? 0) - order.quantity);
+    });
+
+    return remaining;
+  }, [detail.systems, draftOrders.buildOrders, draftOrders.moveOrders]);
+
+  const builtByForceId = useMemo(() => {
+    const built = new Map<string, number>();
+    draftOrders.buildOrders.forEach(order => {
+      const forceId = forceIdBySystemIndex.get(order.systemIndex);
+      if (!forceId) return;
+      built.set(forceId, (built.get(forceId) ?? 0) + order.quantity);
+    });
+    return built;
+  }, [draftOrders.buildOrders, forceIdBySystemIndex]);
+
+  const availableBuildByForceId = useMemo(() => {
+    const available = new Map<string, number>();
+    detail.forces.forEach(force => {
+      available.set(force.id, Math.max(0, force.fleetsAvailableToBuild - (builtByForceId.get(force.id) ?? 0)));
+    });
+    return available;
+  }, [detail.forces, builtByForceId]);
 
   const localPlayer = detail.localPlayerIndex === null
     ? null
     : detail.players.find(player => player.index === detail.localPlayerIndex) ?? null;
+  const localForces = useMemo(
+    () => (detail.localPlayerIndex === null ? [] : detail.forces.filter(force => force.playerIndex === detail.localPlayerIndex)),
+    [detail.forces, detail.localPlayerIndex]
+  );
+  const playerResourceTotals = useMemo(() => {
+    const totals = new Map<number, number[]>();
+    detail.players.forEach(player => totals.set(player.index, [0, 0, 0, 0]));
+
+    detail.systems.forEach(system => {
+      if (system.ownerIndex < 0) return;
+
+      const bucket = totals.get(system.ownerIndex) ?? [0, 0, 0, 0];
+      for (let index = 0; index < 4; index += 1) {
+        bucket[index] = (bucket[index] ?? 0) + (system.resources[index] ?? 0);
+      }
+      totals.set(system.ownerIndex, bucket);
+    });
+
+    return totals;
+  }, [detail.players, detail.systems]);
+
   const selectedSystem = findSystem(detail.systems, selectedSystemIndex);
-  const selectedOwner = selectedSystem && selectedSystem.ownerIndex >= 0
-    ? detail.players.find(player => player.index === selectedSystem.ownerIndex) ?? null
-    : null;
-  const selectedForce = selectedSystem
-    ? detail.forces.find(force => force.playerIndex === selectedSystem.ownerIndex && force.systems.includes(selectedSystem.index)) ?? null
-    : null;
-  const selectedBuildOrder = selectedSystem ? draftOrders.buildOrders.find(order => order.systemIndex === selectedSystem.index) ?? null : null;
-  const canCommand = !detail.ended && !detail.spectator && !!localPlayer && !localPlayer.defeated && !localPlayer.resigned;
   const selectedOwnedByLocal = !!selectedSystem && detail.localPlayerIndex === selectedSystem.ownerIndex;
-  const statsPlayer = detail.players.find(player => player.index === statsPlayerIndex) ?? detail.players[0] ?? null;
+  const selectedSystemForce = selectedOwnedByLocal && selectedSystem
+    ? forceById.get(forceIdBySystemIndex.get(selectedSystem.index) ?? '')
+    : null;
+  const activeBuildForce = placementMode === 'BUILD_FLEET' && selectedForceId
+    ? forceById.get(selectedForceId) ?? null
+    : null;
+  const selectedReadyForce = selectedSystemForce && (availableBuildByForceId.get(selectedSystemForce.id) ?? 0) > 0
+    ? selectedSystemForce
+    : null;
+  const selectedForce = activeBuildForce
+    ?? selectedReadyForce
+    ?? localForces.find(force => (availableBuildByForceId.get(force.id) ?? 0) > 0)
+    ?? null;
+  const selectedMoveOrder = selectedMoveOrderKey
+    ? draftOrders.moveOrders.find(order => moveOrderKey(order.sourceIndex, order.targetIndex) === selectedMoveOrderKey) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!selectedMoveOrderKey) return;
+    if (selectedMoveOrder) return;
+    setSelectedMoveOrderKey(null);
+  }, [selectedMoveOrder, selectedMoveOrderKey]);
+
+  useEffect(() => {
+    if (!selectedForceId || forceById.has(selectedForceId)) return;
+    setSelectedForceId(null);
+  }, [forceById, selectedForceId]);
+
+  const canCommand = !detail.ended && !detail.spectator && !!localPlayer && !localPlayer.defeated && !localPlayer.resigned;
+  const selectedForceAvailable = selectedForce
+    ? availableBuildByForceId.get(selectedForce.id) ?? 0
+    : 0;
+  const selectedForceCapital = selectedForce
+    ? findSystem(detail.systems, selectedForce.capitalIndex)
+    : null;
   const turnProgress = detail.turnDurationTicks > 0
     ? Math.max(0, Math.min(100, (detail.turnTicksLeft / detail.turnDurationTicks) * 100))
     : 0;
-  const victoryLeaders = detail.victory.leaders
-    .map(index => detail.players.find(player => player.index === index)?.name)
-    .filter(Boolean)
-    .join(', ');
-  const victors = detail.victory.victors
-    .map(index => detail.players.find(player => player.index === index)?.name)
-    .filter(Boolean)
-    .join(', ');
+  const queuedOrderCount = orderCount(draftOrders);
+  const isOnline = connectionStatus === 'Online';
+  const turnSeconds = Math.max(0, Math.ceil(detail.turnTicksLeft / 50));
+  const localFleetReserve = useMemo(
+    () => localForces.reduce((total, force) => total + (availableBuildByForceId.get(force.id) ?? 0), 0),
+    [availableBuildByForceId, localForces]
+  );
+  const armedMoveSystem = armedMoveSource === null ? null : systemByIndex.get(armedMoveSource) ?? null;
+
+  const moveTargetIndexes = useMemo(() => {
+    if (!localPlayer || placementMode !== 'MOVE_FLEET_DEST' || armedMoveSource === null) return [];
+
+    const source = systemByIndex.get(armedMoveSource);
+    const sourceForceId = forceIdBySystemIndex.get(armedMoveSource);
+    if (!source || !sourceForceId) return [];
+
+    return detail.systems
+      .filter(system => {
+        if (system.index === source.index) return false;
+        if (forceIdBySystemIndex.get(system.index) === sourceForceId) return true;
+        if (!source.neighbors.includes(system.index)) return false;
+        return system.ownerIndex < 0 || !localPlayer.allies[system.ownerIndex];
+      })
+      .map(system => system.index);
+  }, [armedMoveSource, detail.systems, forceIdBySystemIndex, localPlayer, placementMode, systemByIndex]);
+
+  const buildTargetIndexes = useMemo(() => {
+    if (placementMode !== 'BUILD_FLEET' || !activeBuildForce) return [];
+    return activeBuildForce.systems;
+  }, [activeBuildForce, placementMode]);
+
+  const projectTargetIndexes = useMemo(() => {
+    if (!localPlayer || !armedProjectType) return [];
+
+    if (placementMode === 'DEFENSIVE_NET') {
+      return detail.systems
+        .filter(system => system.ownerIndex === localPlayer.index && !system.hasDefensiveNet)
+        .map(system => system.index);
+    }
+
+    if (placementMode === 'TERRAFORM') {
+      return detail.systems
+        .filter(system => system.ownerIndex === localPlayer.index && system.score === 0)
+        .map(system => system.index);
+    }
+
+    if (placementMode === 'STELLAR_BOMB') {
+      return detail.systems
+        .filter(system => system.ownerIndex !== localPlayer.index)
+        .filter(system => system.ownerIndex < 0 || !localPlayer.allies[system.ownerIndex])
+        .filter(system => system.neighbors.some(neighborIndex => systemByIndex.get(neighborIndex)?.ownerIndex === localPlayer.index))
+        .map(system => system.index);
+    }
+
+    if (placementMode === 'GATE_SRC') {
+      return detail.systems
+        .filter(system => system.ownerIndex === localPlayer.index)
+        .map(system => system.index);
+    }
+
+    if (placementMode === 'GATE_DEST' && projectSourceIndex !== null) {
+      const anchor = systemByIndex.get(projectSourceIndex);
+      if (!anchor) return [];
+      return detail.systems
+        .filter(system => system.index !== anchor.index)
+        .filter(system => !anchor.neighbors.includes(system.index))
+        .map(system => system.index);
+    }
+
+    return [];
+  }, [armedProjectType, detail.systems, localPlayer, placementMode, projectSourceIndex, systemByIndex]);
+
+  const projectAvailability = useMemo(() => {
+    const availability = new Map<string, boolean>();
+    PROJECT_PANEL_META.forEach(meta => {
+      const research = localPlayer?.researchPoints[meta.researchIndex] ?? 0;
+      let hasTarget = false;
+
+      if (meta.type === 'METAL') {
+        hasTarget = detail.systems.some(system => system.ownerIndex === detail.localPlayerIndex && !system.hasDefensiveNet);
+      } else if (meta.type === 'BIOMASS') {
+        hasTarget = detail.systems.some(system => system.ownerIndex === detail.localPlayerIndex && system.score === 0);
+      } else if (meta.type === 'ENERGY') {
+        hasTarget = detail.systems.some(system =>
+          system.ownerIndex !== detail.localPlayerIndex
+          && (system.ownerIndex < 0 || !(localPlayer?.allies[system.ownerIndex] ?? false))
+          && system.neighbors.some(neighborIndex => systemByIndex.get(neighborIndex)?.ownerIndex === detail.localPlayerIndex));
+      } else {
+        hasTarget = detail.systems.some(system =>
+          system.ownerIndex === detail.localPlayerIndex
+          && detail.systems.some(other => other.index !== system.index && !system.neighbors.includes(other.index)));
+      }
+
+      availability.set(meta.type, research >= RESEARCH_DISPLAY_GOAL && hasTarget);
+    });
+    return availability;
+  }, [detail.localPlayerIndex, detail.systems, localPlayer, systemByIndex]);
+
+  const systemHighlights = useMemo(() => {
+    const highlights = new Map<number, BoardHighlight>();
+
+    if (placementMode === 'MOVE_FLEET_DEST') {
+      if (armedMoveSource !== null) highlights.set(armedMoveSource, 'source');
+      moveTargetIndexes.forEach(index => highlights.set(index, 'candidate'));
+    } else if (placementMode === 'BUILD_FLEET') {
+      buildTargetIndexes.forEach(index => highlights.set(index, 'build'));
+    } else if (placementMode === 'GATE_SRC') {
+      projectTargetIndexes.forEach(index => highlights.set(index, 'candidate'));
+    } else if (placementMode === 'GATE_DEST') {
+      if (projectSourceIndex !== null) highlights.set(projectSourceIndex, 'project-source');
+      projectTargetIndexes.forEach(index => highlights.set(index, 'project-target'));
+    } else if (placementMode !== 'NONE') {
+      projectTargetIndexes.forEach(index => highlights.set(index, 'project-target'));
+    }
+
+    return highlights;
+  }, [armedMoveSource, buildTargetIndexes, moveTargetIndexes, placementMode, projectSourceIndex, projectTargetIndexes]);
 
   const commitOrders = (next: OrdersSnapshot) => {
     setDraftOrders(next);
     onSetOrders(next);
   };
 
-  const adjustSelectedBuildOrder = (delta: number) => {
-    if (!selectedSystem || !selectedOwnedByLocal) {
+  const clearPlacementState = () => {
+    setPlacementMode('NONE');
+    setSelectedForceId(null);
+    setArmedMoveSource(null);
+    setArmedProjectType(null);
+    setProjectSourceIndex(null);
+    setSelectedMoveOrderKey(null);
+  };
+
+  const activateBuildPlacement = () => {
+    if (!canCommand) return;
+
+    const preferredForce = selectedSystemForce ?? localForces.find(force => (availableBuildByForceId.get(force.id) ?? 0) > 0) ?? null;
+    if (!preferredForce || (availableBuildByForceId.get(preferredForce.id) ?? 0) <= 0) return;
+
+    if (placementMode === 'BUILD_FLEET' && selectedForceId === preferredForce.id) {
+      clearPlacementState();
       return;
     }
-    const nextQuantity = Math.max(0, (selectedBuildOrder?.quantity ?? 0) + delta);
-    commitOrders(updateBuildOrder(draftOrders, selectedSystem.index, nextQuantity));
+
+    setSelectedMoveOrderKey(null);
+    setPlacementMode('BUILD_FLEET');
+    setSelectedForceId(preferredForce.id);
+    setArmedMoveSource(null);
+    setArmedProjectType(null);
+    setProjectSourceIndex(null);
+  };
+
+  const armProject = (type: 'METAL' | 'BIOMASS' | 'ENERGY' | 'EXOTICS') => {
+    if (!canCommand || !projectAvailability.get(type)) return;
+
+    const nextMode: PlacementMode = type === 'METAL'
+      ? 'DEFENSIVE_NET'
+      : type === 'BIOMASS'
+        ? 'TERRAFORM'
+        : type === 'ENERGY'
+          ? 'STELLAR_BOMB'
+          : 'GATE_SRC';
+
+    if (placementMode === nextMode && armedProjectType === type) {
+      clearPlacementState();
+      return;
+    }
+
+    setSelectedMoveOrderKey(null);
+    setPlacementMode(nextMode);
+    setSelectedForceId(null);
+    setArmedMoveSource(null);
+    setArmedProjectType(type);
+    setProjectSourceIndex(null);
+  };
+
+  const selectMoveOrder = (sourceIndex: number, targetIndex: number) => {
+    setSelectedMoveOrderKey(moveOrderKey(sourceIndex, targetIndex));
+    setPlacementMode('MOVE_FLEET_DEST');
+    setSelectedForceId(null);
+    setArmedMoveSource(sourceIndex);
+    setArmedProjectType(null);
+    setProjectSourceIndex(null);
+    setSelectedSystemIndex(targetIndex);
+  };
+
+  const adjustSelectedMoveOrder = (action: MoveAdjustAction) => {
+    if (!selectedMoveOrder) return;
+
+    const source = systemByIndex.get(selectedMoveOrder.sourceIndex);
+    if (!source) return;
+
+    const remaining = remainingGarrisonBySystem.get(source.index) ?? source.garrison;
+    const delta = moveAdjustSize(
+      action,
+      currentModifier,
+      selectedMoveOrder.quantity,
+      remaining,
+      source.minimumGarrison,
+      garrisonsCanBeRemoved
+    );
+
+    const nextQuantity = Math.max(0, selectedMoveOrder.quantity + delta);
+    const next = updateMoveOrder(draftOrders, selectedMoveOrder.sourceIndex, selectedMoveOrder.targetIndex, nextQuantity);
+    commitOrders(next);
+
+    if (nextQuantity <= 0) {
+      setSelectedMoveOrderKey(null);
+    }
+  };
+
+  const cancelBoardAction = (systemIndex: number | null) => {
+    if (placementMode !== 'NONE') {
+      clearPlacementState();
+      return;
+    }
+
+    setSelectedMoveOrderKey(null);
+
+    if (systemIndex === null) return;
+
+    const project = draftOrders.projectOrders.find(order =>
+      order.targetIndex === systemIndex || order.sourceIndex === systemIndex);
+
+    if (!project) return;
+    commitOrders(removeProjectOrder(draftOrders, project.type));
   };
 
   const handleSystemSelect = (systemIndex: number) => {
-    if (armedMoveSource !== null && armedMoveSource !== systemIndex) {
-      const existing = draftOrders.moveOrders.find(
-        order => order.sourceIndex === armedMoveSource && order.targetIndex === systemIndex
-      );
-      commitOrders(updateMoveOrder(draftOrders, armedMoveSource, systemIndex, (existing?.quantity ?? 0) + 1));
-      setArmedMoveSource(null);
-      setSelectedSystemIndex(systemIndex);
-      return;
-    }
-
-    if (armedProjectType === 'EXOTICS' && projectSourceIndex !== null && projectSourceIndex !== systemIndex) {
-      commitOrders(updateProjectOrder(draftOrders, { type: 'EXOTICS', sourceIndex: projectSourceIndex, targetIndex: systemIndex }));
-      setArmedProjectType(null);
-      setProjectSourceIndex(null);
-      setSelectedSystemIndex(systemIndex);
-      return;
-    }
+    const system = systemByIndex.get(systemIndex);
+    if (!system) return;
 
     setSelectedSystemIndex(systemIndex);
-  };
 
-  const armMove = () => {
-    if (!selectedSystem || !selectedOwnedByLocal || !canCommand) {
-      return;
-    }
-    setArmedProjectType(null);
-    setProjectSourceIndex(null);
-    setArmedMoveSource(selectedSystem.index);
-  };
-
-  const applyProjectToSelected = (type: 'METAL' | 'BIOMASS' | 'ENERGY') => {
-    if (!selectedSystem || !canCommand) {
+    if (!canCommand) {
+      setSelectedMoveOrderKey(null);
       return;
     }
 
-    const existing = draftOrders.projectOrders.find(order => order.type === type);
-    const next = existing?.targetIndex === selectedSystem.index
-      ? cloneOrders({
-          ...draftOrders,
-          projectOrders: draftOrders.projectOrders.filter(order => order.type !== type)
-        })
-      : updateProjectOrder(draftOrders, { type, sourceIndex: null, targetIndex: selectedSystem.index });
+    if (placementMode === 'MOVE_FLEET_DEST') {
+      const source = armedMoveSource === null ? null : systemByIndex.get(armedMoveSource);
+      if (source && moveTargetIndexes.includes(systemIndex)) {
+        const existing = draftOrders.moveOrders.find(order => order.sourceIndex === source.index && order.targetIndex === systemIndex);
+        const movable = remainingGarrisonBySystem.get(source.index) ?? source.garrison;
+        const quantity = movePlacementSize(currentModifier, movable, source.minimumGarrison, garrisonsCanBeRemoved);
+        if (quantity > 0) {
+          commitOrders(updateMoveOrder(draftOrders, source.index, systemIndex, (existing?.quantity ?? 0) + quantity));
+          setSelectedMoveOrderKey(moveOrderKey(source.index, systemIndex));
+        }
+        return;
+      }
 
-    commitOrders(next);
-  };
-
-  const armTannhauser = () => {
-    if (!selectedSystem || !selectedOwnedByLocal || !canCommand) {
+      const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
+      if (system.ownerIndex === detail.localPlayerIndex && remaining > 0) {
+        setArmedMoveSource(systemIndex);
+        setSelectedMoveOrderKey(null);
+      }
       return;
     }
-    setArmedMoveSource(null);
-    setArmedProjectType('EXOTICS');
-    setProjectSourceIndex(selectedSystem.index);
+
+    if (placementMode === 'NONE' && system.ownerIndex === detail.localPlayerIndex) {
+      const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
+      if (remaining > 0) {
+        setPlacementMode('MOVE_FLEET_DEST');
+        setArmedMoveSource(systemIndex);
+        setSelectedMoveOrderKey(null);
+      }
+      return;
+    }
+
+    if (placementMode === 'BUILD_FLEET') {
+      if (!activeBuildForce || !buildTargetIndexes.includes(systemIndex)) return;
+
+      const available = availableBuildByForceId.get(activeBuildForce.id) ?? 0;
+      const quantity = buildStepSize(currentModifier, available);
+      if (quantity <= 0) return;
+
+      const existing = draftOrders.buildOrders.find(order => order.systemIndex === systemIndex);
+      commitOrders(updateBuildOrder(draftOrders, systemIndex, (existing?.quantity ?? 0) + quantity));
+
+      const remainingReserve = available - quantity;
+      if (remainingReserve > 0) return;
+
+      const nextForce = localForces.find(force =>
+        force.id !== activeBuildForce.id && (availableBuildByForceId.get(force.id) ?? 0) > 0);
+
+      if (nextForce) {
+        setSelectedForceId(nextForce.id);
+      } else {
+        clearPlacementState();
+      }
+      return;
+    }
+
+    if (placementMode === 'DEFENSIVE_NET' && projectTargetIndexes.includes(systemIndex)) {
+      commitOrders(updateProjectOrder(draftOrders, { type: 'METAL', sourceIndex: null, targetIndex: systemIndex }));
+      clearPlacementState();
+      return;
+    }
+
+    if (placementMode === 'TERRAFORM' && projectTargetIndexes.includes(systemIndex)) {
+      commitOrders(updateProjectOrder(draftOrders, { type: 'BIOMASS', sourceIndex: null, targetIndex: systemIndex }));
+      clearPlacementState();
+      return;
+    }
+
+    if (placementMode === 'STELLAR_BOMB' && projectTargetIndexes.includes(systemIndex)) {
+      commitOrders(updateProjectOrder(draftOrders, { type: 'ENERGY', sourceIndex: null, targetIndex: systemIndex }));
+      clearPlacementState();
+      return;
+    }
+
+    if (placementMode === 'GATE_SRC') {
+      if (system.ownerIndex === detail.localPlayerIndex) {
+        setPlacementMode('GATE_DEST');
+        setProjectSourceIndex(systemIndex);
+      }
+      return;
+    }
+
+    if (placementMode === 'GATE_DEST') {
+      if (projectSourceIndex !== null && projectTargetIndexes.includes(systemIndex)) {
+        commitOrders(updateProjectOrder(draftOrders, { type: 'EXOTICS', sourceIndex: systemIndex, targetIndex: projectSourceIndex }));
+        clearPlacementState();
+      }
+      return;
+    }
+
+    setSelectedMoveOrderKey(null);
   };
+
+  const boardPrompt = detail.spectator
+    ? 'Spectator feed active. Track the battlefield and watch orders resolve.'
+    : selectedMoveOrder
+      ? `Route selected. ${modifierCopy(currentModifier)} on-map editor adjusts the route and stays active while you edit.`
+      : placementMode === 'MOVE_FLEET_DEST'
+        ? `Routing from ${armedMoveSystem?.name ?? 'the selected system'}. Click a destination to add fleets, or click another owned system to switch the source.`
+        : placementMode === 'BUILD_FLEET'
+          ? `Place fleets in territory ${selectedForceCapital?.name ?? 'territory'} (${selectedForceAvailable} remaining). Placement stays active until that reserve is spent or you cancel.`
+          : placementMode === 'DEFENSIVE_NET'
+            ? 'Select a friendly system to construct a defense net, or right click to cancel this project.'
+            : placementMode === 'TERRAFORM'
+              ? 'Select a friendly normal world to commence terraforming, or right click to cancel this project.'
+              : placementMode === 'STELLAR_BOMB'
+                ? 'Select a hostile or neutral system beside your border, or right click to cancel this project.'
+                : placementMode === 'GATE_SRC'
+                  ? 'Select a friendly system to anchor one end of the Tannhauser wormhole.'
+                  : placementMode === 'GATE_DEST'
+                    ? 'Select a remote non-neighbor system to anchor the other end of the Tannhauser wormhole.'
+                    : selectedOwnedByLocal
+                      ? `Selected ${selectedSystem?.name ?? 'system'}. Click any of your systems once to route fleets, or click an existing fleet arrow to keep editing that route.`
+                      : 'Select one of your systems to route fleets, or click an existing fleet arrow to edit it.';
+
+  const buildActionLabel = placementMode === 'BUILD_FLEET' ? 'Cancel' : 'Place Fleets';
+
+  if (!detail.systems.length) {
+    return null;
+  }
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[1700px] flex-col gap-4 px-4 py-4 lg:px-8 lg:py-6">
-      <header className="panel flex flex-wrap items-end justify-between gap-4 p-6">
-        <div className="space-y-2">
-          <div className="label">{summary.boardLabel}</div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">{detail.turnName}</h1>
-          <div className="flex flex-wrap gap-2">
-            <span className="notice-chip">{connectionStatus}</span>
-            <span className="notice-chip border-white/10 bg-white/[0.03] text-slate-300">
-              Turn {summary.turn} · {summary.phase}
-            </span>
-            {detail.spectator ? <span className="notice-chip border-white/10 bg-white/[0.03] text-slate-300">Spectating</span> : null}
-            {notice ? <span className="notice-chip border-amber-400/20 bg-amber-400/8 text-amber-100">{notice}</span> : null}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {roomDetail && canCommand ? (
-            <button className="button button-muted" onClick={onResign}>
-              Resign
-            </button>
-          ) : null}
-          {canCommand ? (
-            detail.endedTurn ? (
-              <button className="button" onClick={onCancelEndTurn}>
-                Unlock
-              </button>
-            ) : (
-              <button className="button button-primary" onClick={onEndTurn}>
-                Lock in
-              </button>
-            )
-          ) : null}
-          <button className="button button-muted" onClick={onLeave}>
-            {roomDetail ? 'Leave room' : 'Exit'}
-          </button>
-        </div>
-      </header>
-
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
-        <div className="space-y-4">
-          <Panel eyebrow="Turn" title="Command state">
-            <div className="space-y-4">
-              <div className="h-2 overflow-hidden rounded-full bg-white/6">
-                <div className="h-full rounded-full bg-[linear-gradient(90deg,#6ff5d8,#1ac7b0)]" style={{ width: `${turnProgress}%` }} />
-              </div>
-              <div className="grid gap-2 text-sm text-slate-300">
-                <TurnMetric label="Phase" value={summary.phase} />
-                <TurnMetric label="Clock" value={`${detail.turnTicksLeft / 50}s`} />
-                <TurnMetric label="Waiting" value={String(detail.waitingOn)} />
-                <TurnMetric label="Type" value={formatLabel(detail.gameType)} />
-                <TurnMetric label="Galaxy" value={formatLabel(detail.galaxySize)} />
-                <TurnMetric label="Rules" value={detail.classicRuleset ? 'Classic' : 'Streamlined'} />
-              </div>
-            </div>
-          </Panel>
-
-          <Panel eyebrow="Victory" title="Objectives">
-            <div className="space-y-3 text-sm text-slate-300">
-              <div className="panel-soft px-4 py-3">
-                <div className="label">Leaders</div>
-                <div className="mt-2 text-slate-100">{victoryLeaders || 'None'}</div>
-              </div>
-              <div className="panel-soft px-4 py-3">
-                <div className="label">Victors</div>
-                <div className="mt-2 text-slate-100">{victors || 'Undecided'}</div>
-              </div>
-              <div className="panel-soft px-4 py-3">
-                <div className="label">Outcome</div>
-                <div className="mt-2 text-slate-100">
-                  {detail.ended ? (victors || 'Draw') : summary.playerName}
-                </div>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel eyebrow="Commanders" title="Roster">
-            <div className="space-y-2">
-              {detail.players.map(player => {
-                const incoming = localPlayer ? isBitSet(localPlayer.incomingPactOffersBitmap, player.index) : false;
-                const outgoing = localPlayer ? isBitSet(localPlayer.outgoingPactOffersBitmap, player.index) : false;
-                const allied = localPlayer ? localPlayer.allies[player.index] : false;
-
-                return (
-                  <div key={player.index} className="panel-soft px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: colorFromInt(player.accentColor) }} />
-                        <div>
-                          <div className="text-sm font-medium text-slate-100">{player.name}</div>
-                          <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                            {player.defeated ? 'Defeated' : player.resigned ? 'Resigned' : `R ${player.researchPoints.join(' / ')}`}
-                          </div>
-                        </div>
-                      </div>
-
-                      {canCommand && localPlayer && player.index !== localPlayer.index ? (
-                        allied ? (
-                          <span className="text-[11px] uppercase tracking-[0.24em] text-emerald-300">Allied</span>
-                        ) : incoming ? (
-                          <button className="button px-3 py-2 text-xs" onClick={() => onAcceptAlliance(player.index)}>
-                            Accept
-                          </button>
-                        ) : (
-                          <button
-                            className="button button-muted px-3 py-2 text-xs"
-                            disabled={outgoing || player.defeated || player.resigned}
-                            onClick={() => onRequestAlliance(player.index)}
-                          >
-                            {outgoing ? 'Offered' : 'Diplomacy'}
-                          </button>
-                        )
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Panel>
-
-          <Panel eyebrow="Channel" title="Game chat">
-            <ChatPanel messages={detail.messages} disabled={false} placeholder="Message game" onSend={onSendChat} />
-          </Panel>
-        </div>
-
+    <div className="game-shell">
+      <div className="game-board-stage">
         <GameBoard
           systems={detail.systems}
           players={detail.players}
           tannhauserLinks={detail.tannhauserLinks}
           orders={draftOrders}
+          resolvedEvents={detail.resolvedEvents}
           localPlayerIndex={detail.localPlayerIndex}
           selectedSystemIndex={selectedSystemIndex}
           armedMoveSource={armedMoveSource}
           armedProjectType={armedProjectType}
+          systemHighlights={systemHighlights}
+          selectedMoveOrderKey={selectedMoveOrderKey}
+          turnNumber={detail.turnNumber}
           onSelectSystem={handleSystemSelect}
+          onSelectMoveOrder={selectMoveOrder}
+          onAdjustSelectedMoveOrder={adjustSelectedMoveOrder}
+          onCancelPlacement={cancelBoardAction}
         />
 
-        <div className="space-y-4">
-          <Panel eyebrow="System" title={selectedSystem?.name ?? 'Selection'}>
-            {selectedSystem ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <TurnMetric label="Owner" value={selectedOwner?.name ?? 'Neutral'} />
-                  <TurnMetric label="Garrison" value={String(selectedSystem.garrison)} />
-                  <TurnMetric label="Minimum" value={String(selectedSystem.minimumGarrison)} />
-                  <TurnMetric label="Score" value={String(selectedSystem.score)} />
-                </div>
+        <div className="game-board-banner">
+          <span className={`signal-dot ${isOnline ? 'is-online' : 'is-offline'}`} />
+          <span>{notice ?? boardPrompt}</span>
+        </div>
+      </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  {RESOURCE_LABELS.map((label, index) => (
-                    <div key={label} className="panel-soft px-3 py-3 text-sm text-slate-200">
-                      <div className="label">{label}</div>
-                      <div className="mt-2 text-lg font-semibold text-white">{selectedSystem.resources[index] ?? 0}</div>
-                    </div>
-                  ))}
-                </div>
+      <div className="game-brand">
+        <span className="game-brand-badge">{summary.turn}</span>
+        <div className="game-brand-copy">
+          <div className="game-brand-title">SHATTERED PLANS</div>
+          <div className="game-brand-subtitle">{summary.boardLabel} sector</div>
+        </div>
+      </div>
 
-                {selectedForce ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <TurnMetric label="Force prod" value={String(selectedForce.fleetProduction)} />
-                    <TurnMetric label="Build reserve" value={String(selectedForce.fleetsAvailableToBuild)} />
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="text-sm text-slate-400">Select a system.</div>
-            )}
-          </Panel>
+      <div className="game-overlays">
+        <aside className="game-rail game-left-rail">
+          <Panel title="COMMANDERS" compact className="game-panel">
+            <div className="game-rail-note">Signal {connectionStatus}</div>
+            <div className="commander-stack">
+              {detail.players.map(player => {
+                const incoming = localPlayer ? isBitSet(localPlayer.incomingPactOffersBitmap, player.index) : false;
+                const outgoing = localPlayer ? isBitSet(localPlayer.outgoingPactOffersBitmap, player.index) : false;
+                const allied = localPlayer ? localPlayer.allies[player.index] : false;
 
-          <Panel eyebrow="Orders" title="Actions">
-            <div className="space-y-3">
-              <div className="panel-soft px-4 py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium text-slate-100">Build fleets</div>
-                    <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">
-                      {selectedOwnedByLocal ? 'Selected system' : 'Select one of your systems'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button className="button px-3 py-2 text-xs" disabled={!selectedOwnedByLocal || !canCommand} onClick={() => adjustSelectedBuildOrder(-1)}>
-                      -1
-                    </button>
-                    <span className="min-w-10 text-center text-sm font-semibold text-slate-100">{selectedBuildOrder?.quantity ?? 0}</span>
-                    <button className="button px-3 py-2 text-xs" disabled={!selectedOwnedByLocal || !canCommand} onClick={() => adjustSelectedBuildOrder(1)}>
-                      +1
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="panel-soft px-4 py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium text-slate-100">Move fleets</div>
-                    <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">
-                      {armedMoveSource !== null ? 'Pick destination on the board' : 'Select your system, then arm'}
-                    </div>
-                  </div>
-                  <button className="button px-3 py-2 text-xs" disabled={!selectedOwnedByLocal || !canCommand} onClick={armMove}>
-                    {armedMoveSource !== null ? 'Armed' : 'Arm move'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid gap-2">
-                {(['METAL', 'BIOMASS', 'ENERGY'] as const).map(type => (
-                  <button
-                    key={type}
-                    className="button justify-between"
-                    disabled={!selectedSystem || !canCommand}
-                    onClick={() => applyProjectToSelected(type)}
-                  >
-                    <span>{PROJECT_LABELS[type]}</span>
-                    <span className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                      {draftOrders.projectOrders.some(order => order.type === type) ? shortProjectLabel(type) : 'Ready'}
-                    </span>
-                  </button>
-                ))}
-
-                <button className="button justify-between" disabled={!selectedOwnedByLocal || !canCommand} onClick={armTannhauser}>
-                  <span>{PROJECT_LABELS.EXOTICS}</span>
-                  <span className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                    {armedProjectType === 'EXOTICS' ? 'Pick target' : 'Arm'}
+                let control = (
+                  <span className="commander-pill is-muted">
+                    {player.defeated ? 'Defeated' : player.resigned ? 'Resigned' : 'Scanning'}
                   </span>
-                </button>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel eyebrow="Queued" title="Turn orders">
-            <div className="space-y-3">
-              {draftOrders.buildOrders.length === 0 && draftOrders.moveOrders.length === 0 && draftOrders.projectOrders.length === 0 ? (
-                <div className="panel-soft px-4 py-4 text-sm text-slate-400">No orders queued.</div>
-              ) : null}
-
-              {draftOrders.buildOrders.map(order => {
-                const system = findSystem(detail.systems, order.systemIndex);
-                return (
-                  <div key={`build-${order.systemIndex}`} className="panel-soft flex items-center justify-between gap-3 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-100">{system?.name ?? `System ${order.systemIndex}`}</div>
-                      <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">Build</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="button px-3 py-2 text-xs" onClick={() => commitOrders(updateBuildOrder(draftOrders, order.systemIndex, order.quantity - 1))}>
-                        -
-                      </button>
-                      <span className="min-w-8 text-center text-sm font-semibold text-white">{order.quantity}</span>
-                      <button className="button px-3 py-2 text-xs" onClick={() => commitOrders(updateBuildOrder(draftOrders, order.systemIndex, order.quantity + 1))}>
-                        +
-                      </button>
-                    </div>
-                  </div>
                 );
-              })}
 
-              {draftOrders.moveOrders.map((order, index) => {
-                const source = findSystem(detail.systems, order.sourceIndex);
-                const target = findSystem(detail.systems, order.targetIndex);
+                if (player.index === detail.localPlayerIndex) {
+                  control = <span className="commander-pill is-local">Local</span>;
+                } else if (canCommand && localPlayer) {
+                  if (allied) {
+                    control = <span className="commander-pill is-allied">Allied</span>;
+                  } else if (incoming) {
+                    control = (
+                      <button className="commander-pill is-accept" onClick={() => onAcceptAlliance(player.index)}>
+                        Accept
+                      </button>
+                    );
+                  } else {
+                    control = (
+                      <button
+                        className={`commander-pill ${outgoing ? 'is-muted' : ''}`}
+                        disabled={outgoing || player.defeated || player.resigned}
+                        onClick={() => onRequestAlliance(player.index)}
+                      >
+                        {outgoing ? 'Pending' : 'Diplomacy'}
+                      </button>
+                    );
+                  }
+                }
 
                 return (
-                  <div key={`move-${order.sourceIndex}-${order.targetIndex}`} className="panel-soft flex items-center justify-between gap-3 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-100">
-                        {source?.name ?? order.sourceIndex} → {target?.name ?? order.targetIndex}
+                  <article
+                    key={player.index}
+                    className={`commander-card ${player.index === detail.localPlayerIndex ? 'is-local' : ''}`}
+                    style={{ '--commander-accent': colorFromInt(player.accentColor) } as CSSProperties}
+                  >
+                    <div className="commander-card-strip" />
+                    <div className="commander-card-main">
+                      <div className="commander-card-head">
+                        <div className="commander-card-identity">
+                          <div className="commander-card-name">{player.name}</div>
+                          {(player.defeated || player.resigned) && (
+                            <div className="commander-card-status">
+                              {player.defeated ? 'Defeated' : 'Resigned'}
+                            </div>
+                          )}
+                        </div>
+                        {control}
                       </div>
-                      <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">Move</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="button px-3 py-2 text-xs"
-                        onClick={() => {
-                          const nextQuantity = order.quantity - 1;
-                          if (nextQuantity <= 0) {
-                            const next = cloneOrders(draftOrders);
-                            next.moveOrders.splice(index, 1);
-                            commitOrders(next);
-                            return;
-                          }
-                          commitOrders(updateMoveOrder(draftOrders, order.sourceIndex, order.targetIndex, nextQuantity));
-                        }}
-                      >
-                        -
-                      </button>
-                      <span className="min-w-8 text-center text-sm font-semibold text-white">{order.quantity}</span>
-                      <button
-                        className="button px-3 py-2 text-xs"
-                        onClick={() => commitOrders(updateMoveOrder(draftOrders, order.sourceIndex, order.targetIndex, order.quantity + 1))}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
 
-              {draftOrders.projectOrders.map(project => {
-                const target = findSystem(detail.systems, project.targetIndex);
-                const source = findSystem(detail.systems, project.sourceIndex);
-
-                return (
-                  <div key={project.type} className="panel-soft flex items-center justify-between gap-3 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-100">{projectLabel(project)}</div>
-                      <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">
-                        {source ? `${source.name} → ` : ''}
-                        {target?.name ?? 'Pending'}
+                      <div className="commander-research">
+                        <span className="commander-research-prefix">R</span>
+                        {RESOURCE_DISPLAY_META.map((resource, index) => (
+                          <span key={resource.label} className="commander-research-group">
+                            {index > 0 && <span className="commander-research-separator">/</span>}
+                            <span
+                              className="commander-research-value"
+                              style={{ color: resource.color }}
+                            >
+                              {playerResourceTotals.get(player.index)?.[resource.index] ?? 0}
+                            </span>
+                          </span>
+                        ))}
                       </div>
                     </div>
-                    <button
-                      className="button button-muted px-3 py-2 text-xs"
-                      onClick={() => commitOrders(cloneOrders({ ...draftOrders, projectOrders: draftOrders.projectOrders.filter(order => order.type !== project.type) }))}
-                    >
-                      Clear
-                    </button>
-                  </div>
+                  </article>
                 );
               })}
             </div>
           </Panel>
+        </aside>
 
-          <Panel eyebrow="Stats" title={statsPlayer?.name ?? 'Player'}>
-            <div className="flex flex-wrap gap-2">
-              {detail.players.map(player => (
-                <button
-                  key={player.index}
-                  className={`button px-3 py-2 text-xs ${player.index === statsPlayerIndex ? 'button-primary' : 'button-muted'}`}
-                  onClick={() => setStatsPlayerIndex(player.index)}
-                >
-                  {player.name}
-                </button>
-              ))}
+        <aside className="game-rail game-right-rail">
+          <Panel compact className="game-panel orders-panel">
+            <div className="orders-panel-head">
+              <div className="orders-panel-heading">
+                <h2 className="orders-panel-title">TACTICAL ORDERS</h2>
+                <span className="orders-panel-count">{queuedOrderCount} queued</span>
+              </div>
+              <button className="hud-chip" onClick={onLeave}>
+                Leave Game
+              </button>
             </div>
 
-            {statsPlayer ? (
-              <div className="mt-4 grid gap-2">
-                {STAT_LABELS.map((label, index) => (
-                  <div key={label} className="panel-soft flex items-center justify-between gap-3 px-4 py-3 text-sm text-slate-200">
-                    <span>{label}</span>
-                    <span className="font-medium text-white">{statsPlayer.stats[index] ?? '-'}</span>
-                  </div>
-                ))}
+            <button
+              className={`fleet-status-card ${placementMode === 'BUILD_FLEET' ? 'is-active' : ''}`}
+              disabled={!canCommand || !selectedForce || selectedForceAvailable <= 0}
+              onClick={activateBuildPlacement}
+              type="button"
+            >
+              <div className="section-eyebrow">Fleets</div>
+              <div className="fleet-status-main">
+                <span className="fleet-status-value">{localPlayer ? localFleetReserve : '--'}</span>
+                <span className="fleet-status-unit">ready</span>
               </div>
-            ) : null}
-          </Panel>
+              <div className="fleet-status-copy">
+                {selectedForce
+                  ? `${selectedForceCapital?.name ?? 'Territory'} reserve ${selectedForceAvailable}. ${placementMode === 'BUILD_FLEET' ? 'Click again to cancel placement.' : 'Click to place fleets in the active territory.'}`
+                  : canCommand
+                    ? 'Select one of your systems to focus a territory, then place fleets from here.'
+                    : 'Fleet placement unavailable.'}
+              </div>
+              <div className="fleet-status-action">{buildActionLabel}</div>
+            </button>
 
-          <Panel eyebrow="Log" title="Resolution">
-            <div className="scroll-panel max-h-64 space-y-2 p-2">
-              {detail.eventLog.length === 0 ? (
-                <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4 text-sm text-slate-400">
-                  No events yet.
+            <div className="project-list">
+              {PROJECT_PANEL_META.map(meta => {
+                const research = localPlayer?.researchPoints[meta.researchIndex] ?? 0;
+                const active = draftOrders.projectOrders.some(order => order.type === meta.type);
+                const armed = armedProjectType === meta.type;
+                const ready = projectAvailability.get(meta.type) ?? false;
+                const status = armed
+                  ? 'Armed'
+                  : active
+                    ? 'Queued'
+                    : ready
+                      ? 'Ready'
+                      : `${Math.max(0, RESEARCH_DISPLAY_GOAL - research)} short`;
+
+                return (
+                  <button
+                    key={meta.type}
+                    className={`project-row ${active ? 'is-active' : ''} ${armed ? 'is-armed' : ''}`}
+                    disabled={!canCommand || !ready}
+                    style={{ '--project-accent': meta.accent } as CSSProperties}
+                    onClick={() => armProject(meta.type)}
+                    type="button"
+                  >
+                    <div className="project-row-head">
+                      <span>{meta.label}</span>
+                      <strong>{research}/{RESEARCH_DISPLAY_GOAL}</strong>
+                    </div>
+                    <div className="project-row-copy">
+                      <span>{status}</span>
+                      <span>{armed ? 'Choose target' : active ? 'Re-arm' : ready ? 'Arm' : 'Locked'}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="orders-lock-card">
+              <div className="orders-lock-copy">
+                <div className="section-eyebrow">Turn</div>
+                <div className="orders-lock-title">
+                  {detail.endedTurn ? 'Orders locked in.' : `${queuedOrderCount} orders ready for commit.`}
                 </div>
-              ) : (
-                detail.eventLog.map((event, index) => (
-                  <div key={`${event}-${index}`} className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-slate-200">
-                    {eventLabel(event)}
-                  </div>
-                ))
+              </div>
+              {canCommand && (
+                detail.endedTurn
+                  ? <button className="turn-lock-button is-locked" onClick={onCancelEndTurn}>Unlock</button>
+                  : <button className="turn-lock-button" onClick={onEndTurn}>Lock In</button>
               )}
             </div>
           </Panel>
+        </aside>
+      </div>
+
+      <div className="chat-fab-stack">
+        {chatOpen && (
+          <div className="chat-drawer">
+            <Panel title="COMMS" compact className="game-panel">
+              <ChatPanel messages={detail.messages} disabled={false} placeholder="Transmit order..." onSend={onSendChat} />
+            </Panel>
+          </div>
+        )}
+        <button
+          className={`chat-fab ${chatOpen ? 'is-open' : ''}`}
+          onClick={() => setChatOpen(open => !open)}
+          type="button"
+          aria-label={chatOpen ? 'Close chat' : 'Open chat'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path d="M8 12h8M8 9h5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="game-bottom-dock">
+        <div className="turn-dock">
+          <div className="turn-progress-track">
+            <div className="turn-progress-fill" style={{ width: `${turnProgress}%` }} />
+          </div>
+          <div className="turn-meta">
+            <span className="turn-meta-primary">Turn {summary.turn}</span>
+            <span>{formatLabel(summary.phase)}</span>
+            <span>{turnSeconds}s</span>
+            {detail.spectator && <span>Spectating</span>}
+            {!detail.spectator && summary.waitingOn > 0 && <span>Waiting on {summary.waitingOn}</span>}
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function TurnMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="panel-soft flex items-center justify-between gap-3 px-4 py-3">
-      <span>{label}</span>
-      <span className="font-medium text-white">{value}</span>
     </div>
   );
 }

@@ -36,32 +36,37 @@ export function LobbyScreen({
   const [aiPlayers, setAiPlayers] = useState(3);
   const [turnLengthIndex, setTurnLengthIndex] = useState(0);
 
-  return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col gap-4 px-4 py-4 lg:px-8 lg:py-6">
-      <header className="panel flex flex-wrap items-end justify-between gap-4 p-6">
-        <div className="space-y-2">
-          <div className="label">Lobby</div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">Commander {displayName}</h1>
-          <div className="flex flex-wrap gap-2">
-            <span className="notice-chip">{connectionStatus}</span>
-            {notice ? <span className="notice-chip border-amber-400/20 bg-amber-400/8 text-amber-100">{notice}</span> : null}
-          </div>
-        </div>
+  const isOnline = connectionStatus === 'connected';
 
-        <div className="flex flex-wrap gap-2">
-          <button className="button" onClick={onCreateTutorial} disabled={!canAct}>
+  return (
+    <div className="mx-auto flex min-h-screen w-full max-w-[1200px] flex-col gap-4 px-4 py-6">
+      {/* Top bar */}
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="font-display text-lg font-bold tracking-wide text-accent">SHATTERED PLANS</h1>
+
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-2 text-sm">
+            <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} />
+            <span className={isOnline ? 'text-accent' : 'text-muted'}>{isOnline ? 'Online' : 'Offline'}</span>
+          </span>
+
+          {notice && <span className="text-xs text-danger">{notice}</span>}
+
+          <button className="btn btn-ghost btn-sm" onClick={onCreateTutorial} disabled={!canAct}>
             Tutorial
           </button>
-          <button className="button button-primary" onClick={onCreateRoom} disabled={!canAct}>
-            Create room
+          <button className="btn btn-primary btn-sm" onClick={onCreateRoom} disabled={!canAct}>
+            Create Room
           </button>
         </div>
       </header>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_360px]">
-        <div className="space-y-4">
-          <Panel eyebrow="Rooms" title="Open tables">
-            <div className="grid gap-3">
+      {/* Two-column layout */}
+      <div className="grid flex-1 grid-cols-[1fr_300px] gap-4">
+        {/* Left column */}
+        <div className="flex flex-col gap-4">
+          <Panel title="ROOMS">
+            <div className="flex flex-col gap-2">
               {lobby.rooms.map(room => (
                 <RoomRow
                   key={room.id}
@@ -72,96 +77,76 @@ export function LobbyScreen({
                 />
               ))}
 
-              {lobby.rooms.length === 0 ? (
-                <div className="panel-soft px-4 py-10 text-center text-sm text-slate-400">No tables open.</div>
-              ) : null}
+              {lobby.rooms.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted">No rooms available.</div>
+              )}
             </div>
           </Panel>
 
-          <Panel eyebrow="Lobby chat" title="Channel">
+          <Panel title="CHAT" className="flex-1">
             <ChatPanel messages={lobby.messages} disabled={!canAct} placeholder="Message lobby" onSend={onSendChat} />
           </Panel>
         </div>
 
-        <div className="space-y-4">
-          <Panel eyebrow="Skirmish" title="Quick launch">
-            <div className="space-y-4">
-              <label className="block space-y-2">
+        {/* Right column */}
+        <div className="flex flex-col gap-4">
+          <Panel title="QUICK GAME">
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1">
                 <span className="label">Game type</span>
-                <select className="select" value={gameType} onChange={event => setGameType(event.target.value)}>
+                <select className="select" value={gameType} onChange={e => setGameType(e.target.value)}>
                   {GAME_TYPE_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </label>
 
               <div className="grid grid-cols-2 gap-3">
-                <label className="block space-y-2">
-                  <span className="label">AI</span>
-                  <select className="select" value={aiPlayers} onChange={event => setAiPlayers(Number(event.target.value))}>
-                    {[1, 2, 3, 4, 5].map(value => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
+                <label className="flex flex-col gap-1">
+                  <span className="label">AI count</span>
+                  <select className="select" value={aiPlayers} onChange={e => setAiPlayers(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 5].map(v => (
+                      <option key={v} value={v}>{v}</option>
                     ))}
                   </select>
                 </label>
 
-                <label className="block space-y-2">
-                  <span className="label">Turn</span>
-                  <select className="select" value={turnLengthIndex} onChange={event => setTurnLengthIndex(Number(event.target.value))}>
+                <label className="flex flex-col gap-1">
+                  <span className="label">Turn speed</span>
+                  <select className="select" value={turnLengthIndex} onChange={e => setTurnLengthIndex(Number(e.target.value))}>
                     {TURN_LENGTH_OPTIONS.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
+                      <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
                 </label>
               </div>
 
-              <label className="flex items-center justify-between rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-slate-200">
-                <span>Classic ruleset</span>
-                <input checked={classicRuleset} onChange={event => setClassicRuleset(event.target.checked)} type="checkbox" />
+              <label className="flex items-center justify-between py-1 text-sm text-slate-200">
+                <span className="font-body">Classic ruleset</span>
+                <input
+                  className="toggle"
+                  type="checkbox"
+                  checked={classicRuleset}
+                  onChange={e => setClassicRuleset(e.target.checked)}
+                />
               </label>
 
               <button
-                className="button button-primary w-full"
+                className="btn btn-primary w-full"
                 disabled={!canAct}
                 onClick={() => onCreateSkirmish({ gameType, classicRuleset, aiPlayers, turnLengthIndex })}
               >
-                Launch skirmish
+                Launch
               </button>
             </div>
           </Panel>
 
-          <Panel eyebrow="Players" title="Present">
-            <div className="grid gap-2">
+          <Panel title="ONLINE">
+            <div className="flex flex-col gap-1">
               {lobby.players.map(player => (
-                <div key={player.id} className="panel-soft flex items-center justify-between gap-3 px-4 py-3">
-                  <div>
-                    <div className="text-sm font-medium text-slate-100">{player.displayName}</div>
-                    <div className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">
-                      {player.roomId ? `Room ${player.roomId}` : 'Lobby'}
-                    </div>
-                  </div>
-                  <span className={`text-[11px] uppercase tracking-[0.24em] ${player.connected ? 'text-emerald-300' : 'text-slate-500'}`}>
-                    {player.connected ? 'Online' : 'Away'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel eyebrow="Rules" title="Access">
-            <div className="grid gap-2 text-sm text-slate-300">
-              {ACCESS_MODE_OPTIONS.map(option => (
-                <div key={option.value} className="panel-soft flex items-center justify-between px-4 py-3">
-                  <span>{option.label}</span>
-                  <span className="text-xs uppercase tracking-[0.22em] text-slate-500">
-                    {getOptionLabel(ACCESS_MODE_OPTIONS, option.value)}
-                  </span>
+                <div key={player.id} className="flex items-center gap-2 px-2 py-1.5">
+                  <span className={`status-dot ${player.connected ? 'online' : 'offline'}`} />
+                  <span className="text-sm font-body text-slate-100">{player.displayName}</span>
                 </div>
               ))}
             </div>
@@ -183,39 +168,35 @@ function RoomRow({
   onJoin: () => void;
   onSpectate: () => void;
 }) {
+  const isSpectate = room.status === 'running' && room.canSpectate && !room.member && !room.invited;
+  const action = isSpectate ? onSpectate : onJoin;
+
   const actionLabel = room.requested
     ? 'Pending'
     : room.member
       ? 'Enter'
-      : room.status === 'running' && room.canSpectate
+      : isSpectate
         ? 'Spectate'
         : room.invited
           ? 'Accept'
           : 'Join';
 
-  const action = room.status === 'running' && room.canSpectate && !room.member && !room.invited ? onSpectate : onJoin;
-
   return (
-    <div className="panel-soft flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="text-base font-medium text-slate-100">{room.title}</div>
-          {room.invited ? <span className="notice-chip">Invited</span> : null}
-          {room.requested ? <span className="notice-chip border-white/10 bg-white/[0.03] text-slate-300">Requested</span> : null}
-        </div>
-        <div className="text-sm text-slate-400">
-          {room.ownerName} · {room.playerCount}/{room.maxPlayers} · {room.status}
+    <div className="panel-card flex items-center justify-between gap-3 px-3 py-2">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-slate-100">{room.title}</div>
+        <div className="text-xs text-muted">
+          {room.ownerName} &middot; {room.playerCount}/{room.maxPlayers} &middot; {room.status}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full border border-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-slate-400">
-          {room.isPublic ? 'Open' : 'Invite'}
-        </span>
-        <button className="button button-primary" disabled={!canAct || room.requested} onClick={action}>
-          {actionLabel}
-        </button>
-      </div>
+      <button
+        className="btn btn-primary btn-sm shrink-0"
+        disabled={!canAct || room.requested}
+        onClick={action}
+      >
+        {actionLabel}
+      </button>
     </div>
   );
 }

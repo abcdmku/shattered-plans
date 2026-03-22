@@ -1,0 +1,7 @@
+.git
+.gitignore
+.idea
+.vscode
+target
+src/app/node_modules
+src/app/dist

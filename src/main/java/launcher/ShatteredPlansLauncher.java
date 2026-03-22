@@ -12,6 +12,7 @@ import funorb.shatteredplans.client.ShatteredPlansClient;
 import funorb.shatteredplans.client.Sounds;
 import funorb.shatteredplans.map.StarSystem;
 import funorb.shatteredplans.server.ShatteredPlansServer;
+import funorb.shatteredplans.web.ShatteredPlansWebServer;
 import launcher.app.FOEventQueue;
 import launcher.app.FOStub;
 import launcher.app.JFocusFrame;
@@ -81,16 +82,22 @@ public final class ShatteredPlansLauncher {
     Buffer.RSA_EXPONENT = BigInteger.ONE; // effectively disables encryption
 
     final ShatteredPlansServer server;
+    final ShatteredPlansWebServer webServer;
     if (options.runServer) {
       try {
+        loadStaticResources();
         server = new ShatteredPlansServer();
         final InetSocketAddress addr = server.bind(options.serverAddress.getPort());
         System.out.println("Started server on " + addr.getHostString() + ":" + addr.getPort());
+        webServer = new ShatteredPlansWebServer(options.webPort);
+        webServer.start();
+        System.out.println("Started web server on 0.0.0.0:" + options.webPort);
       } catch (final Exception e) {
         throw new RuntimeException("could not create server", e);
       }
     } else {
       server = null;
+      webServer = null;
       final InetSocketAddress addr = options.serverAddress;
       System.out.println("Connecting to existing server on " + addr.getHostString() + ":" + addr.getPort());
     }
@@ -129,6 +136,9 @@ public final class ShatteredPlansLauncher {
             server.shutdown();
           } catch (final InterruptedException e1) {}
         }
+        if (webServer != null) {
+          webServer.stop();
+        }
         System.exit(0);
         throw new Error("exit failed");
       }
@@ -148,10 +158,14 @@ public final class ShatteredPlansLauncher {
     loadStaticResources();
 
     final ShatteredPlansServer server;
+    final ShatteredPlansWebServer webServer;
     try {
       server = new ShatteredPlansServer();
       final InetSocketAddress addr = server.bind(options.serverAddress.getPort());
       System.out.println("Started server on " + addr.getHostString() + ":" + addr.getPort());
+      webServer = new ShatteredPlansWebServer(options.webPort);
+      webServer.start();
+      System.out.println("Started web server on 0.0.0.0:" + options.webPort);
     } catch (final Exception e) {
       throw new RuntimeException("could not create server", e);
     }
@@ -164,6 +178,7 @@ public final class ShatteredPlansLauncher {
       } catch (final InterruptedException e2) {
         System.out.println("Interrupted, aborting.");
       }
+      webServer.stop();
     }
   }
 

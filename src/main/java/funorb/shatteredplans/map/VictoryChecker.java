@@ -53,7 +53,7 @@ public abstract class VictoryChecker {
     return this.victors != null && Arrays.stream(this.victors).noneMatch(Predicate.isEqual(player));
   }
 
-  public final @NotNull Player @Nullable [] getVictors() {
+  public final Player @Nullable [] getVictors() {
     return this.victors;
   }
 

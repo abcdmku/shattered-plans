@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: Aptos, "Avenir Next", "Segoe UI", sans-serif;
+  --bg-0: #030712;
+  --bg-1: #06101d;
+  --bg-2: #0a1727;
+  --panel: rgba(9, 16, 28, 0.78);
+  --panel-soft: rgba(255, 255, 255, 0.04);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(111, 245, 216, 0.28);
+  --text: #eef6ff;
+  --muted: #94a3b8;
+  --accent: #6ff5d8;
+  --accent-strong: #1ac7b0;
+  --warm: #ffb86c;
+  background:
+    radial-gradient(circle at top, rgba(111, 245, 216, 0.16), transparent 28%),
+    radial-gradient(circle at 18% 22%, rgba(255, 184, 108, 0.12), transparent 20%),
+    linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 38%, var(--bg-0) 100%);
+  color: var(--text);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: transparent;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at center, black 45%, transparent 100%);
+  opacity: 0.18;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(111, 245, 216, 0.28);
+  color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel {
+  @apply rounded-[28px] border border-white/10 shadow-panel backdrop-blur-xl;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+    var(--panel);
+}
+
+.panel-soft {
+  @apply rounded-[22px] border border-white/10;
+  background: var(--panel-soft);
+}
+
+.label {
+  @apply text-[11px] uppercase tracking-[0.28em];
+  color: var(--muted);
+}
+
+.button {
+  @apply inline-flex items-center justify-center rounded-2xl border px-4 py-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+.button:hover {
+  border-color: rgba(111, 245, 216, 0.4);
+  background: rgba(111, 245, 216, 0.08);
+}
+
+.button-primary {
+  border-color: rgba(111, 245, 216, 0.4);
+  background: linear-gradient(180deg, rgba(111, 245, 216, 0.22), rgba(27, 199, 176, 0.12));
+  color: #ddfff7;
+}
+
+.button-muted {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: #cbd5e1;
+}
+
+.input,
+.select {
+  @apply w-full rounded-2xl border px-4 py-3 text-sm outline-none transition;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(2, 8, 18, 0.78);
+  color: var(--text);
+}
+
+.input::placeholder {
+  color: #64748b;
+}
+
+.input:focus,
+.select:focus {
+  border-color: rgba(111, 245, 216, 0.52);
+  box-shadow: 0 0 0 3px rgba(111, 245, 216, 0.12);
+}
+
+.scroll-panel {
+  @apply overflow-auto rounded-[22px] border border-white/10 bg-black/10 p-1;
+}
+
+.notice-chip {
+  @apply inline-flex items-center rounded-full border px-3 py-1 text-xs uppercase tracking-[0.24em];
+  border-color: rgba(111, 245, 216, 0.22);
+  background: rgba(111, 245, 216, 0.08);
+  color: #cbfbf3;
+}
+
+.board-shell {
+  @apply relative min-h-[68vh] overflow-hidden rounded-[32px] border border-white/10 shadow-panel;
+  background:
+    radial-gradient(circle at top, rgba(111, 245, 216, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+    rgba(3, 8, 18, 0.92);
+}

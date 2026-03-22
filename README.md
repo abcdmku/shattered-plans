@@ -20,6 +20,28 @@ java -jar shatteredplans-0.1.0.jar --host <HOST>
 
 replacing `<HOST>` with your IP address. By default, the server runs on port 43594, but you can specify a different port using the `--port` flag. A few other options are also available, pass `--help` to see them all.
 
+## Running the web frontend
+
+The repository also includes a browser frontend in `src/app` backed by the
+original Java game logic. For local Docker development or a Coolify deploy,
+run:
+
+```sh
+docker compose up --build
+```
+
+This starts:
+
+- the Java backend on internal port `8080`
+- the web frontend on `http://localhost`
+- the legacy TCP server on `43594`
+
+Useful environment variables:
+
+- `FRONTEND_PORT` to change the published web port
+- `SP_TCP_PORT` to change the published legacy TCP port
+- `JAVA_OPTS` to tune JVM memory
+
 ### Experimental: Adjusting the user interface scale
 
 Limited support for adjusting the UI scale is available by setting one or both of the following JVM properties:

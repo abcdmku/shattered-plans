@@ -120,6 +120,7 @@ public final class WebState {
         case "endTurn" -> this.endTurnLocked(session);
         case "cancelEndTurn" -> this.cancelEndTurnLocked(session);
         case "resign" -> this.resignLocked(session);
+        case "rematch" -> this.rematchLocked(session);
         case "requestAlliance" -> this.requestAllianceLocked(session, payload.path("targetPlayerIndex").asInt(-1));
         case "acceptAlliance" -> this.acceptAllianceLocked(session, payload.path("targetPlayerIndex").asInt(-1));
         default -> throw new IllegalStateException("Unknown command: " + type);
@@ -422,6 +423,46 @@ public final class WebState {
   private void resignLocked(final BrowserSession session) {
     final WebGameSession game = this.requirePlayerGameLocked(session);
     game.handleHumanDeparture(session, true);
+  }
+
+  private void rematchLocked(final BrowserSession session) {
+    if (session.room != null) {
+      final WebRoom room = this.requireOwnedRoomLocked(session);
+      if (room.game == null || !room.game.isFinished()) {
+        throw new IllegalStateException("The current room game has not finished.");
+      }
+
+      final WebGameSession previous = room.game;
+      for (final BrowserSession spectator : List.copyOf(previous.spectators)) {
+        if (spectator.spectatingGame == previous) {
+          spectator.spectatingGame = null;
+        }
+      }
+      previous.spectators.clear();
+      this.startRoomGameLocked(session);
+      return;
+    }
+
+    if (session.soloGame != null) {
+      final WebGameSession previous = session.soloGame;
+      if (!previous.isFinished()) {
+        throw new IllegalStateException("The current game has not finished.");
+      }
+
+      previous.shutdown();
+      session.soloGame = WebGameSession.createSoloGame(
+          previous.kind,
+          session,
+          previous.aiByPlayer.size(),
+          previous.state.turnLengthIndex,
+          previous.state.gameOptions,
+          previous.state.gameType,
+          this.scheduler,
+          this::handleTurnTimer);
+      return;
+    }
+
+    throw new IllegalStateException("No finished game is available for rematch.");
   }
 
   private void requestAllianceLocked(final BrowserSession session, final int targetPlayerIndex) {

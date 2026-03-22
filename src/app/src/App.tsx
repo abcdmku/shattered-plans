@@ -162,6 +162,10 @@ export default function App() {
         summary={session.game}
         detail={session.gameDetail}
         roomDetail={session.roomDetail}
+        canRematch={Boolean(
+          session.gameDetail
+          && (session.roomDetail ? session.roomDetail.ownerSessionId === session.user?.id : session.gameDetail.kind !== 'multiplayer')
+        )}
         connectionStatus={connectionStatus}
         notice={notice}
         onLeave={() => {
@@ -171,6 +175,7 @@ export default function App() {
             issueCommand('leaveGame');
           }
         }}
+        onRematch={() => issueCommand('rematch')}
         onSendChat={message => issueCommand('sendChat', { scope: 'game', message })}
         onSetOrders={orders => issueCommand('setOrders', orders)}
         onEndTurn={() => issueCommand('endTurn')}

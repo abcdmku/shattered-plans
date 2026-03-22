@@ -21,9 +21,11 @@ interface GameScreenProps {
   summary: GameSummary;
   detail: GameDetail;
   roomDetail?: RoomDetail | null;
+  canRematch: boolean;
   connectionStatus: string;
   notice?: string;
   onLeave: () => void;
+  onRematch: () => void;
   onSendChat: (message: string) => void;
   onSetOrders: (orders: OrdersSnapshot) => void;
   onEndTurn: () => void;
@@ -46,7 +48,7 @@ type PlacementMode =
 type ModifierState = 'default' | 'shift' | 'alt' | 'control';
 type MoveAdjustAction = 'increment' | 'decrement' | 'clear';
 
-const RESEARCH_DISPLAY_GOAL = 20;
+const RESEARCH_DISPLAY_GOAL = 5;
 
 const PROJECT_PANEL_META = [
   {
@@ -77,6 +79,25 @@ const PROJECT_PANEL_META = [
     researchIndex: 3,
     accent: 'var(--project-exotics)'
   }
+] as const;
+
+const ENDGAME_STATS_META = [
+  { label: 'Max Fleet Size', index: 0 },
+  { label: 'Fleets Destroyed', index: 1 },
+  { label: 'Fleets Lost', index: 2 },
+  { label: 'Avg Move Size', index: 3 },
+  { label: 'Max Production', index: 4 },
+  { label: 'Fleets Built', index: 5 },
+  { label: 'Projects Used', index: 6 },
+  { label: 'Research Wasted', index: 7 },
+  { label: 'Successful Attacks', index: 8 },
+  { label: 'Failed Attacks', index: 9 },
+  { label: 'Successful Defences', index: 10 },
+  { label: 'Failed Defences', index: 11 },
+  { label: 'Efficiency', index: 12 },
+  { label: 'Fluidity', index: 13 },
+  { label: 'Aggressiveness', index: 14 },
+  { label: 'Solidity', index: 15 }
 ] as const;
 
 function cloneOrders(orders: OrdersSnapshot): OrdersSnapshot {
@@ -204,9 +225,12 @@ function modifierCopy(modifier: ModifierState): string {
 export function GameScreen({
   summary,
   detail,
+  roomDetail,
+  canRematch,
   connectionStatus,
   notice,
   onLeave,
+  onRematch,
   onSendChat,
   onSetOrders,
   onEndTurn,
@@ -216,7 +240,7 @@ export function GameScreen({
 }: GameScreenProps) {
   const pendingSignature = useMemo(() => JSON.stringify(detail.pendingOrders), [detail.pendingOrders]);
   const [draftOrders, setDraftOrders] = useState<OrdersSnapshot>(() => cloneOrders(detail.pendingOrders));
-  const [selectedSystemIndex, setSelectedSystemIndex] = useState<number | null>(detail.systems[0]?.index ?? null);
+  const [selectedSystemIndex, setSelectedSystemIndex] = useState<number | null>(null);
   const [placementMode, setPlacementMode] = useState<PlacementMode>('NONE');
   const [selectedForceId, setSelectedForceId] = useState<string | null>(null);
   const [armedMoveSource, setArmedMoveSource] = useState<number | null>(null);
@@ -228,17 +252,25 @@ export function GameScreen({
 
   useEffect(() => {
     setDraftOrders(cloneOrders(detail.pendingOrders));
+  }, [pendingSignature]);
+
+  useEffect(() => {
     setPlacementMode('NONE');
     setSelectedForceId(null);
     setArmedMoveSource(null);
     setArmedProjectType(null);
     setProjectSourceIndex(null);
     setSelectedMoveOrderKey(null);
-  }, [detail.id, detail.turnNumber, pendingSignature]);
+  }, [detail.id, detail.turnNumber]);
 
   useEffect(() => {
-    if (selectedSystemIndex !== null && detail.systems.some(system => system.index === selectedSystemIndex)) return;
-    setSelectedSystemIndex(detail.systems[0]?.index ?? null);
+    setSelectedSystemIndex(null);
+  }, [detail.id]);
+
+  useEffect(() => {
+    if (selectedSystemIndex === null) return;
+    if (detail.systems.some(system => system.index === selectedSystemIndex)) return;
+    setSelectedSystemIndex(null);
   }, [detail.systems, selectedSystemIndex]);
 
   useEffect(() => {
@@ -315,6 +347,11 @@ export function GameScreen({
   const localPlayer = detail.localPlayerIndex === null
     ? null
     : detail.players.find(player => player.index === detail.localPlayerIndex) ?? null;
+  const victorIndexSet = useMemo(() => new Set(detail.victory.victors), [detail.victory.victors]);
+  const victoriousPlayers = useMemo(
+    () => detail.players.filter(player => victorIndexSet.has(player.index)),
+    [detail.players, victorIndexSet]
+  );
   const localForces = useMemo(
     () => (detail.localPlayerIndex === null ? [] : detail.forces.filter(force => force.playerIndex === detail.localPlayerIndex)),
     [detail.forces, detail.localPlayerIndex]
@@ -367,6 +404,7 @@ export function GameScreen({
   }, [forceById, selectedForceId]);
 
   const canCommand = !detail.ended && !detail.spectator && !!localPlayer && !localPlayer.defeated && !localPlayer.resigned;
+  const everyoneEliminated = detail.players.every(player => player.defeated || player.resigned);
   const selectedForceAvailable = selectedForce
     ? availableBuildByForceId.get(selectedForce.id) ?? 0
     : 0;
@@ -383,6 +421,46 @@ export function GameScreen({
     () => localForces.reduce((total, force) => total + (availableBuildByForceId.get(force.id) ?? 0), 0),
     [availableBuildByForceId, localForces]
   );
+  const localOutcome = useMemo(() => {
+    if (!detail.ended || detail.localPlayerIndex === null) return null;
+    if (detail.victory.victors.length !== 1) {
+      return victorIndexSet.has(detail.localPlayerIndex) ? 'draw' : 'loser';
+    }
+    return victorIndexSet.has(detail.localPlayerIndex) ? 'winner' : 'loser';
+  }, [detail.ended, detail.localPlayerIndex, detail.victory.victors.length, victorIndexSet]);
+  const orderedEndgamePlayers = useMemo(() => (
+    [...detail.players].sort((left, right) => {
+      const victorDelta = Number(victorIndexSet.has(right.index)) - Number(victorIndexSet.has(left.index));
+      if (victorDelta !== 0) return victorDelta;
+
+      const localDelta = Number(right.index === detail.localPlayerIndex) - Number(left.index === detail.localPlayerIndex);
+      if (localDelta !== 0) return localDelta;
+
+      return left.index - right.index;
+    })
+  ), [detail.localPlayerIndex, detail.players, victorIndexSet]);
+  const winnerNames = victoriousPlayers.map(player => player.name).join(', ');
+  const endgameHeadline = !detail.ended
+    ? ''
+    : localOutcome === 'winner'
+      ? 'Victory'
+      : localOutcome === 'loser'
+        ? 'Defeat'
+        : localOutcome === 'draw'
+          ? 'Draw'
+          : detail.victory.victors.length === 1
+            ? `${victoriousPlayers[0]?.name ?? 'Commander'} Wins`
+            : 'Draw';
+  const endgameSummary = !detail.ended
+    ? ''
+    : detail.victory.victors.length === 1
+      ? `${victoriousPlayers[0]?.name ?? 'Commander'} secured the sector.`
+      : victoriousPlayers.length > 1
+        ? `Shared victory: ${winnerNames}.`
+        : 'No single empire held the field at the end of the round.';
+  const endgameDetail = everyoneEliminated
+    ? 'All empires were eliminated, defeated, or resigned by the final round.'
+    : 'Final campaign standings and end-of-game statistics are listed below.';
   const armedMoveSystem = armedMoveSource === null ? null : systemByIndex.get(armedMoveSource) ?? null;
 
   const moveTargetIndexes = useMemo(() => {
@@ -594,7 +672,10 @@ export function GameScreen({
 
     setSelectedMoveOrderKey(null);
 
-    if (systemIndex === null) return;
+    if (systemIndex === null) {
+      setSelectedSystemIndex(null);
+      return;
+    }
 
     const project = draftOrders.projectOrders.find(order =>
       order.targetIndex === systemIndex || order.sourceIndex === systemIndex);
@@ -603,13 +684,17 @@ export function GameScreen({
     commitOrders(removeProjectOrder(draftOrders, project.type));
   };
 
-  const handleSystemSelect = (systemIndex: number) => {
+  const handleSystemSelect = (systemIndex: number | null) => {
+    if (systemIndex === null) {
+      setSelectedSystemIndex(null);
+      return;
+    }
+
     const system = systemByIndex.get(systemIndex);
     if (!system) return;
 
-    setSelectedSystemIndex(systemIndex);
-
     if (!canCommand) {
+      setSelectedSystemIndex(systemIndex);
       setSelectedMoveOrderKey(null);
       return;
     }
@@ -635,15 +720,25 @@ export function GameScreen({
       return;
     }
 
-    if (placementMode === 'NONE' && system.ownerIndex === detail.localPlayerIndex) {
-      const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
-      if (remaining > 0) {
-        setPlacementMode('MOVE_FLEET_DEST');
-        setArmedMoveSource(systemIndex);
-        setSelectedMoveOrderKey(null);
+    if (placementMode === 'NONE') {
+      if (system.ownerIndex !== detail.localPlayerIndex) {
+        return;
+      }
+
+      const wasSelected = selectedSystemIndex === systemIndex;
+      setSelectedSystemIndex(systemIndex);
+      setSelectedMoveOrderKey(null);
+      if (wasSelected) {
+        const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
+        if (remaining > 0) {
+          setPlacementMode('MOVE_FLEET_DEST');
+          setArmedMoveSource(systemIndex);
+        }
       }
       return;
     }
+
+    setSelectedSystemIndex(systemIndex);
 
     if (placementMode === 'BUILD_FLEET') {
       if (!activeBuildForce || !buildTargetIndexes.includes(systemIndex)) return;
@@ -722,11 +817,13 @@ export function GameScreen({
                 ? 'Select a hostile or neutral system beside your border, or right click to cancel this project.'
                 : placementMode === 'GATE_SRC'
                   ? 'Select a friendly system to anchor one end of the Tannhauser wormhole.'
-                  : placementMode === 'GATE_DEST'
-                    ? 'Select a remote non-neighbor system to anchor the other end of the Tannhauser wormhole.'
-                    : selectedOwnedByLocal
-                      ? `Selected ${selectedSystem?.name ?? 'system'}. Click any of your systems once to route fleets, or click an existing fleet arrow to keep editing that route.`
-                      : 'Select one of your systems to route fleets, or click an existing fleet arrow to edit it.';
+                : placementMode === 'GATE_DEST'
+                  ? 'Select a remote non-neighbor system to anchor the other end of the Tannhauser wormhole.'
+                  : selectedOwnedByLocal
+                      ? `Selected ${selectedSystem?.name ?? 'system'}. Click it again to route fleets, click another system to change focus, or click an existing fleet arrow to edit that route.`
+                      : selectedSystem
+                        ? `Selected ${selectedSystem.name}. Click one of your systems to focus it, then click that same system again to route fleets.`
+                        : 'Select one of your systems to focus it, or click an existing fleet arrow to edit that route.';
 
   const buildActionLabel = placementMode === 'BUILD_FLEET' ? 'Cancel' : 'Place Fleets';
 
@@ -937,6 +1034,91 @@ export function GameScreen({
           </Panel>
         </aside>
       </div>
+
+      {detail.ended && (
+        <div className="game-end-overlay">
+          <div className="game-end-backdrop" />
+          <section className="game-end-panel">
+            <div className="game-end-header">
+              <div className="section-eyebrow">Campaign Complete</div>
+              <h2 className="game-end-title">{endgameHeadline}</h2>
+              <p className="game-end-summary">{endgameSummary}</p>
+              <p className="game-end-copy">{endgameDetail}</p>
+              {victoriousPlayers.length > 0 && (
+                <div className="game-end-winners">
+                  {victoriousPlayers.map(player => (
+                    <span
+                      key={player.index}
+                      className="game-end-winner-pill"
+                      style={{ '--winner-accent': colorFromInt(player.accentColor) } as CSSProperties}
+                    >
+                      {player.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {!canRematch && roomDetail && (
+                <div className="game-end-note">
+                  {roomDetail.ownerName} can launch the rematch from this screen.
+                </div>
+              )}
+            </div>
+
+            <div className="game-end-actions">
+              {canRematch && (
+                <button className="turn-lock-button" onClick={onRematch} type="button">
+                  Rematch
+                </button>
+              )}
+              <button className="hud-chip" onClick={onLeave} type="button">
+                Lobby
+              </button>
+            </div>
+
+            <div className="game-end-stats-grid">
+              {orderedEndgamePlayers.map(player => {
+                const isVictor = victorIndexSet.has(player.index);
+                const statusLabel = isVictor
+                  ? detail.victory.victors.length === 1 ? 'Winner' : 'Draw'
+                  : player.resigned
+                    ? 'Resigned'
+                    : player.defeated
+                      ? 'Defeated'
+                      : 'Loser';
+
+                return (
+                  <article
+                    key={player.index}
+                    className={`game-end-player-card ${isVictor ? 'is-victor' : ''}`}
+                    style={{ '--endgame-accent': colorFromInt(player.accentColor) } as CSSProperties}
+                  >
+                    <div className="game-end-player-head">
+                      <div className="game-end-player-identity">
+                        <div className="game-end-player-name">{player.name}</div>
+                        <div className="game-end-player-state">
+                          {player.resigned ? 'Resigned from the war' : player.defeated ? 'Empire defeated' : 'Campaign completed'}
+                        </div>
+                      </div>
+                      <span className={`game-end-player-chip ${isVictor ? 'is-victor' : ''}`}>
+                        {statusLabel}
+                      </span>
+                    </div>
+
+                    <div className="game-end-player-stats">
+                      {ENDGAME_STATS_META.map(stat => (
+                        <div key={`${player.index}-${stat.label}`} className="game-end-player-stat">
+                          <span>{stat.label}</span>
+                          <strong>{player.stats[stat.index] ?? '--'}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
 
       <div className="chat-fab-stack">
         {chatOpen && (

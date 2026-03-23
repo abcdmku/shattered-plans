@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   PROJECT_LABELS,
   RESOURCE_DISPLAY_META,
@@ -6,6 +6,7 @@ import {
   formatLabel,
   isBitSet
 } from '../../shared/game';
+import { playOriginalSound } from '../../shared/audio';
 import type {
   GameDetail,
   GameSummary,
@@ -48,7 +49,7 @@ type PlacementMode =
 type ModifierState = 'default' | 'shift' | 'alt' | 'control';
 type MoveAdjustAction = 'increment' | 'decrement' | 'clear';
 
-const RESEARCH_DISPLAY_GOAL = 5;
+const RESEARCH_DISPLAY_GOAL = 20;
 
 const PROJECT_PANEL_META = [
   {
@@ -222,6 +223,36 @@ function modifierCopy(modifier: ModifierState): string {
   }
 }
 
+function projectCommitSound(type: 'METAL' | 'BIOMASS' | 'ENERGY' | 'EXOTICS') {
+  switch (type) {
+    case 'METAL':
+      return 'factoryNoise' as const;
+    case 'BIOMASS':
+      return 'shipSelection' as const;
+    case 'ENERGY':
+      return 'shipAttackOrder' as const;
+    case 'EXOTICS':
+      return 'shipMoveOrder' as const;
+  }
+}
+
+function moveOrderSound(
+  targetOwnerIndex: number,
+  localPlayerIndex: number | null,
+  localPlayer: { allies: boolean[] } | null
+) {
+  if (targetOwnerIndex === localPlayerIndex) {
+    return 'shipMoveOrder' as const;
+  }
+  if (targetOwnerIndex < 0) {
+    return 'shipAttackOrder' as const;
+  }
+  if (!localPlayer) {
+    return 'shipAttackOrder' as const;
+  }
+  return localPlayer.allies[targetOwnerIndex] ? 'shipMoveOrder' as const : 'shipAttackOrder' as const;
+}
+
 export function GameScreen({
   summary,
   detail,
@@ -249,6 +280,7 @@ export function GameScreen({
   const [selectedMoveOrderKey, setSelectedMoveOrderKey] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [modifierKeys, setModifierKeys] = useState({ shift: false, alt: false, control: false });
+  const endedRef = useRef(detail.ended);
 
   useEffect(() => {
     setDraftOrders(cloneOrders(detail.pendingOrders));
@@ -272,6 +304,13 @@ export function GameScreen({
     if (detail.systems.some(system => system.index === selectedSystemIndex)) return;
     setSelectedSystemIndex(null);
   }, [detail.systems, selectedSystemIndex]);
+
+  useEffect(() => {
+    if (!endedRef.current && detail.ended) {
+      playOriginalSound('explosion');
+    }
+    endedRef.current = detail.ended;
+  }, [detail.ended]);
 
   useEffect(() => {
     const handleKeyState = (event: KeyboardEvent) => {
@@ -375,6 +414,9 @@ export function GameScreen({
 
   const selectedSystem = findSystem(detail.systems, selectedSystemIndex);
   const selectedOwnedByLocal = !!selectedSystem && detail.localPlayerIndex === selectedSystem.ownerIndex;
+  const selectedSystemRemaining = selectedSystem
+    ? (remainingGarrisonBySystem.get(selectedSystem.index) ?? selectedSystem.garrison)
+    : 0;
   const selectedSystemForce = selectedOwnedByLocal && selectedSystem
     ? forceById.get(forceIdBySystemIndex.get(selectedSystem.index) ?? '')
     : null;
@@ -593,10 +635,12 @@ export function GameScreen({
     if (!preferredForce || (availableBuildByForceId.get(preferredForce.id) ?? 0) <= 0) return;
 
     if (placementMode === 'BUILD_FLEET' && selectedForceId === preferredForce.id) {
+      playOriginalSound('nextClose');
       clearPlacementState();
       return;
     }
 
+    playOriginalSound('nextOpen');
     setSelectedMoveOrderKey(null);
     setPlacementMode('BUILD_FLEET');
     setSelectedForceId(preferredForce.id);
@@ -617,10 +661,12 @@ export function GameScreen({
           : 'GATE_SRC';
 
     if (placementMode === nextMode && armedProjectType === type) {
+      playOriginalSound('nextClose');
       clearPlacementState();
       return;
     }
 
+    playOriginalSound('nextOpen');
     setSelectedMoveOrderKey(null);
     setPlacementMode(nextMode);
     setSelectedForceId(null);
@@ -630,6 +676,7 @@ export function GameScreen({
   };
 
   const selectMoveOrder = (sourceIndex: number, targetIndex: number) => {
+    playOriginalSound('shipSelection');
     setSelectedMoveOrderKey(moveOrderKey(sourceIndex, targetIndex));
     setPlacementMode('MOVE_FLEET_DEST');
     setSelectedForceId(null);
@@ -658,6 +705,9 @@ export function GameScreen({
     const nextQuantity = Math.max(0, selectedMoveOrder.quantity + delta);
     const next = updateMoveOrder(draftOrders, selectedMoveOrder.sourceIndex, selectedMoveOrder.targetIndex, nextQuantity);
     commitOrders(next);
+    if (delta !== 0) {
+      playOriginalSound(nextQuantity <= 0 ? 'nextClose' : 'shipMoveOrder');
+    }
 
     if (nextQuantity <= 0) {
       setSelectedMoveOrderKey(null);
@@ -666,6 +716,7 @@ export function GameScreen({
 
   const cancelBoardAction = (systemIndex: number | null) => {
     if (placementMode !== 'NONE') {
+      playOriginalSound('nextClose');
       clearPlacementState();
       return;
     }
@@ -681,12 +732,18 @@ export function GameScreen({
       order.targetIndex === systemIndex || order.sourceIndex === systemIndex);
 
     if (!project) return;
+    playOriginalSound('nextClose');
     commitOrders(removeProjectOrder(draftOrders, project.type));
   };
 
   const handleSystemSelect = (systemIndex: number | null) => {
     if (systemIndex === null) {
       setSelectedSystemIndex(null);
+      setSelectedMoveOrderKey(null);
+      if (placementMode === 'MOVE_FLEET_DEST') {
+        setPlacementMode('NONE');
+        setArmedMoveSource(null);
+      }
       return;
     }
 
@@ -707,6 +764,7 @@ export function GameScreen({
         const quantity = movePlacementSize(currentModifier, movable, source.minimumGarrison, garrisonsCanBeRemoved);
         if (quantity > 0) {
           commitOrders(updateMoveOrder(draftOrders, source.index, systemIndex, (existing?.quantity ?? 0) + quantity));
+          playOriginalSound(moveOrderSound(system.ownerIndex, detail.localPlayerIndex, localPlayer));
           setSelectedMoveOrderKey(moveOrderKey(source.index, systemIndex));
         }
         return;
@@ -714,6 +772,7 @@ export function GameScreen({
 
       const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
       if (system.ownerIndex === detail.localPlayerIndex && remaining > 0) {
+        playOriginalSound('shipSelection');
         setArmedMoveSource(systemIndex);
         setSelectedMoveOrderKey(null);
       }
@@ -725,22 +784,19 @@ export function GameScreen({
         return;
       }
 
-      const wasSelected = selectedSystemIndex === systemIndex;
+      playOriginalSound('shipSelection');
       setSelectedSystemIndex(systemIndex);
       setSelectedMoveOrderKey(null);
-      if (wasSelected) {
-        const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
-        if (remaining > 0) {
-          setPlacementMode('MOVE_FLEET_DEST');
-          setArmedMoveSource(systemIndex);
-        }
+      const remaining = remainingGarrisonBySystem.get(systemIndex) ?? system.garrison;
+      if (remaining > 0) {
+        setPlacementMode('MOVE_FLEET_DEST');
+        setArmedMoveSource(systemIndex);
       }
       return;
     }
 
-    setSelectedSystemIndex(systemIndex);
-
     if (placementMode === 'BUILD_FLEET') {
+      setSelectedSystemIndex(systemIndex);
       if (!activeBuildForce || !buildTargetIndexes.includes(systemIndex)) return;
 
       const available = availableBuildByForceId.get(activeBuildForce.id) ?? 0;
@@ -749,6 +805,7 @@ export function GameScreen({
 
       const existing = draftOrders.buildOrders.find(order => order.systemIndex === systemIndex);
       commitOrders(updateBuildOrder(draftOrders, systemIndex, (existing?.quantity ?? 0) + quantity));
+      playOriginalSound('factoryNoise');
 
       const remainingReserve = available - quantity;
       if (remainingReserve > 0) return;
@@ -764,19 +821,24 @@ export function GameScreen({
       return;
     }
 
+    setSelectedSystemIndex(systemIndex);
+
     if (placementMode === 'DEFENSIVE_NET' && projectTargetIndexes.includes(systemIndex)) {
+      playOriginalSound(projectCommitSound('METAL'));
       commitOrders(updateProjectOrder(draftOrders, { type: 'METAL', sourceIndex: null, targetIndex: systemIndex }));
       clearPlacementState();
       return;
     }
 
     if (placementMode === 'TERRAFORM' && projectTargetIndexes.includes(systemIndex)) {
+      playOriginalSound(projectCommitSound('BIOMASS'));
       commitOrders(updateProjectOrder(draftOrders, { type: 'BIOMASS', sourceIndex: null, targetIndex: systemIndex }));
       clearPlacementState();
       return;
     }
 
     if (placementMode === 'STELLAR_BOMB' && projectTargetIndexes.includes(systemIndex)) {
+      playOriginalSound(projectCommitSound('ENERGY'));
       commitOrders(updateProjectOrder(draftOrders, { type: 'ENERGY', sourceIndex: null, targetIndex: systemIndex }));
       clearPlacementState();
       return;
@@ -784,6 +846,7 @@ export function GameScreen({
 
     if (placementMode === 'GATE_SRC') {
       if (system.ownerIndex === detail.localPlayerIndex) {
+        playOriginalSound('nextOpen');
         setPlacementMode('GATE_DEST');
         setProjectSourceIndex(systemIndex);
       }
@@ -792,6 +855,7 @@ export function GameScreen({
 
     if (placementMode === 'GATE_DEST') {
       if (projectSourceIndex !== null && projectTargetIndexes.includes(systemIndex)) {
+        playOriginalSound(projectCommitSound('EXOTICS'));
         commitOrders(updateProjectOrder(draftOrders, { type: 'EXOTICS', sourceIndex: systemIndex, targetIndex: projectSourceIndex }));
         clearPlacementState();
       }
@@ -820,12 +884,18 @@ export function GameScreen({
                 : placementMode === 'GATE_DEST'
                   ? 'Select a remote non-neighbor system to anchor the other end of the Tannhauser wormhole.'
                   : selectedOwnedByLocal
-                      ? `Selected ${selectedSystem?.name ?? 'system'}. Click it again to route fleets, click another system to change focus, or click an existing fleet arrow to edit that route.`
+                      ? selectedSystemRemaining > 0
+                        ? `Selected ${selectedSystem?.name ?? 'system'}. Click it to start routing fleets, click another owned system to route from there, or click an existing fleet arrow to edit that route.`
+                        : `Selected ${selectedSystem?.name ?? 'system'}. No fleets can move from here right now. Click another owned system to start routing fleets, or click an existing fleet arrow to edit that route.`
                       : selectedSystem
-                        ? `Selected ${selectedSystem.name}. Click one of your systems to focus it, then click that same system again to route fleets.`
-                        : 'Select one of your systems to focus it, or click an existing fleet arrow to edit that route.';
+                        ? `Selected ${selectedSystem.name}. Click one of your systems to start routing fleets, or click an existing fleet arrow to edit that route.`
+                        : 'Click one of your systems to start routing fleets, or click an existing fleet arrow to edit that route.';
 
   const buildActionLabel = placementMode === 'BUILD_FLEET' ? 'Cancel' : 'Place Fleets';
+  const toggleChat = () => {
+    playOriginalSound(chatOpen ? 'nextClose' : 'nextOpen');
+    setChatOpen(open => !open);
+  };
 
   if (!detail.systems.length) {
     return null;
@@ -860,11 +930,7 @@ export function GameScreen({
       </div>
 
       <div className="game-brand">
-        <span className="game-brand-badge">{summary.turn}</span>
-        <div className="game-brand-copy">
-          <div className="game-brand-title">SHATTERED PLANS</div>
-          <div className="game-brand-subtitle">{summary.boardLabel} sector</div>
-        </div>
+        <div className="game-brand-title">SHATTERED PLANS</div>
       </div>
 
       <div className="game-overlays">
@@ -890,7 +956,13 @@ export function GameScreen({
                     control = <span className="commander-pill is-allied">Allied</span>;
                   } else if (incoming) {
                     control = (
-                      <button className="commander-pill is-accept" onClick={() => onAcceptAlliance(player.index)}>
+                      <button
+                        className="commander-pill is-accept"
+                        onClick={() => {
+                          playOriginalSound('nextOpen');
+                          onAcceptAlliance(player.index);
+                        }}
+                      >
                         Accept
                       </button>
                     );
@@ -899,7 +971,10 @@ export function GameScreen({
                       <button
                         className={`commander-pill ${outgoing ? 'is-muted' : ''}`}
                         disabled={outgoing || player.defeated || player.resigned}
-                        onClick={() => onRequestAlliance(player.index)}
+                        onClick={() => {
+                          playOriginalSound('nextOpen');
+                          onRequestAlliance(player.index);
+                        }}
                       >
                         {outgoing ? 'Pending' : 'Diplomacy'}
                       </button>
@@ -956,7 +1031,13 @@ export function GameScreen({
                 <h2 className="orders-panel-title">TACTICAL ORDERS</h2>
                 <span className="orders-panel-count">{queuedOrderCount} queued</span>
               </div>
-              <button className="hud-chip" onClick={onLeave}>
+              <button
+                className="hud-chip"
+                onClick={() => {
+                  playOriginalSound('nextClose');
+                  onLeave();
+                }}
+              >
                 Leave Game
               </button>
             </div>
@@ -1027,8 +1108,28 @@ export function GameScreen({
               </div>
               {canCommand && (
                 detail.endedTurn
-                  ? <button className="turn-lock-button is-locked" onClick={onCancelEndTurn}>Unlock</button>
-                  : <button className="turn-lock-button" onClick={onEndTurn}>Lock In</button>
+                  ? (
+                    <button
+                      className="turn-lock-button is-locked"
+                      onClick={() => {
+                        playOriginalSound('nextClose');
+                        onCancelEndTurn();
+                      }}
+                    >
+                      Unlock
+                    </button>
+                  )
+                  : (
+                    <button
+                      className="turn-lock-button"
+                      onClick={() => {
+                        playOriginalSound('nextOpen');
+                        onEndTurn();
+                      }}
+                    >
+                      Lock In
+                    </button>
+                  )
               )}
             </div>
           </Panel>
@@ -1066,11 +1167,25 @@ export function GameScreen({
 
             <div className="game-end-actions">
               {canRematch && (
-                <button className="turn-lock-button" onClick={onRematch} type="button">
+                <button
+                  className="turn-lock-button"
+                  onClick={() => {
+                    playOriginalSound('nextOpen');
+                    onRematch();
+                  }}
+                  type="button"
+                >
                   Rematch
                 </button>
               )}
-              <button className="hud-chip" onClick={onLeave} type="button">
+              <button
+                className="hud-chip"
+                onClick={() => {
+                  playOriginalSound('nextClose');
+                  onLeave();
+                }}
+                type="button"
+              >
                 Lobby
               </button>
             </div>
@@ -1130,7 +1245,7 @@ export function GameScreen({
         )}
         <button
           className={`chat-fab ${chatOpen ? 'is-open' : ''}`}
-          onClick={() => setChatOpen(open => !open)}
+          onClick={toggleChat}
           type="button"
           aria-label={chatOpen ? 'Close chat' : 'Open chat'}
         >

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GamePlayer, OrdersSnapshot, ResolvedEventSnapshot, SystemSnapshot, TannhauserSnapshot } from '../../shared/types';
 import { RESOURCE_DISPLAY_META, playerAccent, playerBaseColor, shortProjectLabel } from '../../shared/game';
+import { playOriginalSound, type OriginalSoundKey } from '../../shared/audio';
 
 export type BoardHighlight = 'candidate' | 'source' | 'build' | 'project-source' | 'project-target';
 
@@ -16,6 +17,13 @@ const RESOLVED_POST_COMBAT_HOLD_MS = 360;
 const RESOLVED_RETREAT_PHASE_MS = 1080;
 const RESOLVED_RETREAT_STAGGER_MS = 96;
 const RESOLVED_FALLBACK_PHASE_MS = 1500;
+
+interface AudioCue {
+  cueId: string;
+  soundKey: OriginalSoundKey;
+  atMs: number;
+  volume?: number;
+}
 
 interface GameBoardProps {
   systems: SystemSnapshot[];
@@ -66,6 +74,13 @@ interface ResolvedTimeline {
   retreatStartMs: number;
   retreatEndMs: number;
   totalMs: number;
+}
+
+function isInstantNeutralCapture(event: Pick<ResolvedEventSnapshot, 'kind' | 'ownerAtCombatStart' | 'kills' | 'victorIndex'>): boolean {
+  return event.kind === 'COMBAT'
+    && event.ownerAtCombatStart == null
+    && event.kills === 0
+    && event.victorIndex !== null;
 }
 
 function hexPoints(cx: number, cy: number, r: number): string {
@@ -192,6 +207,30 @@ function movementCurvePath(source: BoardPoint, target: BoardPoint, hexR: number)
   return `M ${source.x} ${source.y} Q ${control.x} ${control.y} ${target.x} ${target.y}`;
 }
 
+function buildResolvedAudioCues(events: ResolvedEventSnapshot[], timeline: ResolvedTimeline): AudioCue[] {
+  const cues: AudioCue[] = [];
+  let combatIndex = 0;
+
+  events.forEach(event => {
+    if (event.kind !== 'COMBAT') return;
+    if (isInstantNeutralCapture(event)) return;
+
+    const combatAtMs = timeline.combatStartMs + combatIndex * RESOLVED_COMBAT_ROUND_HOLD_MS;
+    if (event.kills > 0 || event.victorIndex !== null) {
+      cues.push({
+        cueId: `explosion:${combatIndex}`,
+        soundKey: 'explosion',
+        atMs: combatAtMs + 140 + Math.min(220, event.kills * 22),
+        volume: clamp(0.55 + Math.min(0.25, event.kills * 0.04), 0.45, 0.9)
+      });
+    }
+
+    combatIndex += 1;
+  });
+
+  return cues.sort((left, right) => left.atMs - right.atMs);
+}
+
 function pointDistance(source: BoardPoint, target: BoardPoint): number {
   return Math.hypot(target.x - source.x, target.y - source.y);
 }
@@ -259,6 +298,30 @@ function movementEndpoints(source: BoardPoint, target: BoardPoint, hexR: number)
   };
 }
 
+function straightLinkSegment(
+  source: BoardPoint,
+  target: BoardPoint,
+  hexR: number,
+  insetScale = 0.94
+): { source: BoardPoint; target: BoardPoint; visibleLength: number } {
+  const direction = normalizeVector(target.x - source.x, target.y - source.y);
+  const totalDistance = pointDistance(source, target);
+  const sourceInset = hexEdgeDistance(direction, hexR) * insetScale;
+  const targetInset = hexEdgeDistance({ x: -direction.x, y: -direction.y }, hexR) * insetScale;
+
+  return {
+    source: {
+      x: source.x + direction.x * sourceInset,
+      y: source.y + direction.y * sourceInset
+    },
+    target: {
+      x: target.x - direction.x * targetInset,
+      y: target.y - direction.y * targetInset
+    },
+    visibleLength: Math.max(0, totalDistance - sourceInset - targetInset)
+  };
+}
+
 function movementPath(source: BoardPoint, target: BoardPoint, hexR: number): MovementPath {
   const endpoints = movementEndpoints(source, target, hexR);
   const control = movementCurveControl(endpoints.source, endpoints.target, hexR);
@@ -277,9 +340,13 @@ function quadraticPoint(source: BoardPoint, control: BoardPoint, target: BoardPo
   };
 }
 
-function combatantBars(combatants: ResolvedEventSnapshot['combatants']): ResolvedCombatantBar[] {
+function combatantBars(
+  combatants: ResolvedEventSnapshot['combatants'],
+  ownerAtCombatStart: number | null
+): ResolvedCombatantBar[] {
   return combatants
     .filter(combatant => combatant.fleetsAtStart > 0)
+    .filter(combatant => !(ownerAtCombatStart == null && combatant.playerIndex === null))
     .map(combatant => ({
       playerIndex: combatant.playerIndex,
       sourceIndex: combatant.sourceIndex,
@@ -293,7 +360,7 @@ function combatantBars(combatants: ResolvedEventSnapshot['combatants']): Resolve
 function buildResolvedTimeline(events: ResolvedEventSnapshot[]): ResolvedTimeline {
   const hasBuildEffects = events.some(event => event.kind === 'BUILD' || event.kind === 'PROJECT');
   const hasMoves = events.some(event => event.kind === 'MOVE');
-  const hasCombat = events.some(event => event.kind === 'COMBAT');
+  const hasCombat = events.some(event => event.kind === 'COMBAT' && !isInstantNeutralCapture(event));
   const hasRetreats = events.some(event => event.kind === 'RETREAT' || event.kind === 'COLLAPSE');
 
   const buildStartMs = 0;
@@ -397,6 +464,7 @@ function resolvedEventSignature(events: ResolvedEventSnapshot[]): string {
       event.systemIndex ?? 'n',
       event.quantity,
       event.projectType ?? 'n',
+      event.ownerAtCombatStart ?? 'n',
       event.victorIndex ?? 'n',
       event.fleetsAtEnd,
       event.kills,
@@ -443,6 +511,7 @@ export function GameBoard({
   const resolvedAnimationStartRef = useRef<number | null>(null);
   const lastResolvedAnimationKeyRef = useRef('');
   const panMovedRef = useRef(false);
+  const playedAudioCuesRef = useRef<Set<string>>(new Set());
 
   const systemsByIndex = useMemo(() => new Map(systems.map(system => [system.index, system])), [systems]);
   const playersByIndex = useMemo(() => new Map(players.map(player => [player.index, player])), [players]);
@@ -489,6 +558,10 @@ export function GameBoard({
 
   const resolvedSignature = useMemo(() => resolvedEventSignature(resolvedEvents), [resolvedEvents]);
   const resolvedTimeline = useMemo(() => buildResolvedTimeline(resolvedEvents), [resolvedEvents]);
+  const resolvedAudioCues = useMemo(
+    () => buildResolvedAudioCues(resolvedEvents, resolvedTimeline),
+    [resolvedEvents, resolvedTimeline]
+  );
   const resolvedMoveEvents = useMemo(() => (
     resolvedEvents.flatMap((event, index) => {
       if (event.kind !== 'MOVE') {
@@ -548,7 +621,7 @@ export function GameBoard({
       }
 
       const victor = event.victorIndex === null ? null : playersByIndex.get(event.victorIndex) ?? null;
-      const combatants = combatantBars(event.combatants)
+      const combatants = combatantBars(event.combatants, event.ownerAtCombatStart)
         .map(combatant => {
           const combatantPlayer = combatant.playerIndex === null ? null : playersByIndex.get(combatant.playerIndex) ?? null;
           const endFleets = Math.max(0, combatant.fleetsAtStart - combatant.fleetsDestroyed - combatant.fleetsRetreated);
@@ -562,7 +635,12 @@ export function GameBoard({
           };
         });
 
-      const autoWin = event.kills === 0 && combatants.length <= 1 && event.victorIndex !== null;
+      const instantCapture = isInstantNeutralCapture(event);
+      const autoWin = !instantCapture && event.kills === 0 && combatants.length <= 1 && event.victorIndex !== null;
+      if (instantCapture) {
+        return [];
+      }
+
       if (!combatants.length && !autoWin) {
         return [];
       }
@@ -593,6 +671,7 @@ export function GameBoard({
       stopResolvedPlayback();
       setShowResolvedEvents(false);
       setResolvedElapsedMs(0);
+      playedAudioCuesRef.current = new Set();
       return;
     }
 
@@ -605,6 +684,7 @@ export function GameBoard({
     stopResolvedPlayback();
     setShowResolvedEvents(true);
     setResolvedElapsedMs(0);
+    playedAudioCuesRef.current = new Set();
 
     const tick = (now: number) => {
       if (resolvedAnimationStartRef.current === null) {
@@ -626,6 +706,19 @@ export function GameBoard({
     resolvedAnimationFrameRef.current = window.requestAnimationFrame(tick);
     return stopResolvedPlayback;
   }, [resolvedEvents.length, resolvedSignature, resolvedTimeline.totalMs, stopResolvedPlayback, turnNumber]);
+
+  useEffect(() => {
+    if (!resolvedEvents.length || !showResolvedEvents) return;
+
+    for (const cue of resolvedAudioCues) {
+      const cueKey = `${turnNumber}:${resolvedSignature}:${cue.cueId}:${cue.atMs}`;
+      if (playedAudioCuesRef.current.has(cueKey)) continue;
+      if (resolvedElapsedMs < cue.atMs) continue;
+
+      playedAudioCuesRef.current.add(cueKey);
+      playOriginalSound(cue.soundKey, cue.volume);
+    }
+  }, [resolvedAudioCues, resolvedElapsedMs, resolvedEvents.length, resolvedSignature, showResolvedEvents, turnNumber]);
 
   const clearHeldAction = useCallback(() => {
     if (holdTimeoutRef.current !== null) {
@@ -659,9 +752,6 @@ export function GameBoard({
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
-    const target = e.target as Element;
-    const isBg = target.tagName === 'svg' || target.tagName === 'rect' || target.classList.contains('board-bg');
-    if (e.button === 0 && !isBg) return;
     e.preventDefault();
     panMovedRef.current = false;
     setIsPanning(true);
@@ -689,21 +779,135 @@ export function GameBoard({
     clearHeldAction();
   }, [clearHeldAction]);
 
+  const consumePanClick = useCallback(() => {
+    if (!panMovedRef.current) {
+      return false;
+    }
+
+    panMovedRef.current = false;
+    return true;
+  }, []);
+
   const linkPairs = useMemo(
     () => systems.flatMap(system => system.neighbors.filter(neighbor => system.index < neighbor).map(neighbor => [system.index, neighbor] as const)),
     [systems]
   );
   const visibleLinkPairs = useMemo(() => {
-    const adjacentDistanceThreshold = hexR * 2.08;
-    return linkPairs.filter(([fromIndex, toIndex]) => {
+    const minimumVisibleLinkDistance = Math.max(340, hexR * 3.55);
+    const minimumVisibleGap = Math.max(10, hexR * 0.18);
+    return linkPairs.flatMap(([fromIndex, toIndex]) => {
       const from = systemsByIndex.get(fromIndex);
       const to = systemsByIndex.get(toIndex);
-      if (!from || !to) return false;
-      return pointDistance(from, to) > adjacentDistanceThreshold;
+      if (!from || !to) return [];
+
+      if (pointDistance(from, to) <= minimumVisibleLinkDistance) {
+        return [];
+      }
+
+      const segment = straightLinkSegment(from, to, hexR);
+      if (segment.visibleLength <= minimumVisibleGap) {
+        return [];
+      }
+
+      return [{ fromIndex, toIndex, ...segment }];
     });
   }, [hexR, linkPairs, systemsByIndex]);
+  const tannhauserSegments = useMemo(() => (
+    tannhauserLinks.flatMap(link => {
+      const from = systemsByIndex.get(link.fromIndex);
+      const to = systemsByIndex.get(link.toIndex);
+      if (!from || !to) {
+        return [];
+      }
 
-  const buildOrderBySystem = new Map(orders.buildOrders.map(order => [order.systemIndex, order.quantity]));
+      const minimumVisibleLinkDistance = Math.max(340, hexR * 3.55);
+      if (pointDistance(from, to) <= minimumVisibleLinkDistance) {
+        return [];
+      }
+
+      const segment = straightLinkSegment(from, to, hexR);
+      if (segment.visibleLength <= Math.max(10, hexR * 0.18)) {
+        return [];
+      }
+
+      return [{
+        key: `th-${link.fromIndex}-${link.toIndex}`,
+        ...segment
+      }];
+    })
+  ), [hexR, systemsByIndex, tannhauserLinks]);
+
+  const displayedOwnerIndexBySystem = useMemo(() => {
+    const displayed = new Map<number, number>();
+    systems.forEach(system => displayed.set(system.index, system.ownerIndex));
+
+    if (!showResolvedEvents || !resolvedEvents.length) {
+      return displayed;
+    }
+
+    for (let index = resolvedEvents.length - 1; index >= 0; index -= 1) {
+      const event = resolvedEvents[index]!;
+      if (event.kind === 'COMBAT' && event.systemIndex !== null) {
+        displayed.set(event.systemIndex, event.ownerAtCombatStart ?? -1);
+        continue;
+      }
+
+      if (event.kind === 'COLLAPSE' && event.sourceIndex !== null) {
+        displayed.set(event.sourceIndex, event.playerIndex ?? -1);
+      }
+    }
+
+    const instantCaptureChangeAtMs = resolvedTimeline.combatStartMs > 0
+      ? resolvedTimeline.combatStartMs
+      : Math.max(resolvedTimeline.buildEndMs, resolvedTimeline.moveEndMs);
+
+    resolvedEvents.forEach((event, index) => {
+      if (event.kind === 'COMBAT' && event.systemIndex !== null) {
+        const changeAtMs = isInstantNeutralCapture(event)
+          ? instantCaptureChangeAtMs
+          : resolvedTimeline.combatEndMs;
+
+        if (resolvedElapsedMs >= changeAtMs) {
+          displayed.set(event.systemIndex, event.victorIndex ?? -1);
+        }
+        return;
+      }
+
+      if (event.kind === 'COLLAPSE' && event.sourceIndex !== null) {
+        const collapseAtMs = resolvedTimeline.retreatStartMs + index * RESOLVED_RETREAT_STAGGER_MS;
+        if (resolvedElapsedMs >= collapseAtMs) {
+          displayed.set(event.sourceIndex, -1);
+        }
+      }
+    });
+
+    return displayed;
+  }, [
+    resolvedElapsedMs,
+    resolvedEvents,
+    resolvedTimeline.buildEndMs,
+    resolvedTimeline.combatEndMs,
+    resolvedTimeline.combatStartMs,
+    resolvedTimeline.moveEndMs,
+    resolvedTimeline.retreatStartMs,
+    showResolvedEvents,
+    systems
+  ]);
+
+  const displayedGarrisonBySystem = useMemo(() => {
+    const displayed = new Map<number, number>();
+    systems.forEach(system => displayed.set(system.index, system.garrison));
+
+    orders.buildOrders.forEach(order => {
+      displayed.set(order.systemIndex, (displayed.get(order.systemIndex) ?? 0) + order.quantity);
+    });
+
+    orders.moveOrders.forEach(order => {
+      displayed.set(order.sourceIndex, Math.max(0, (displayed.get(order.sourceIndex) ?? 0) - order.quantity));
+    });
+
+    return displayed;
+  }, [orders.buildOrders, orders.moveOrders, systems]);
   const projectLabelsByTarget = new Map<number, string[]>();
   for (const proj of orders.projectOrders) {
     if (proj.targetIndex === null) continue;
@@ -753,7 +957,7 @@ export function GameBoard({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
-      style={{ cursor: isPanning ? 'grabbing' : 'default' }}
+      style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
     >
       <svg
         className="board-svg"
@@ -820,8 +1024,7 @@ export function GameBoard({
           height={contentH * 5}
           fill="rgba(0, 0, 0, 0.001)"
           onClick={() => {
-            if (panMovedRef.current) {
-              panMovedRef.current = false;
+            if (consumePanClick()) {
               return;
             }
             onSelectSystem(null);
@@ -829,49 +1032,31 @@ export function GameBoard({
         />
 
         <g pointerEvents="none">
-          <rect className="board-bg" x={originX - contentW * 2} y={originY - contentH * 2} width={contentW * 5} height={contentH * 5} fill="url(#board-base)" />
-          <rect x={originX - contentW * 2} y={originY - contentH * 2} width={contentW * 5} height={contentH * 5} fill="url(#board-haze-a)" opacity="0.88" />
-          <rect x={originX - contentW * 2} y={originY - contentH * 2} width={contentW * 5} height={contentH * 5} fill="url(#board-haze-b)" opacity="0.74" />
-          <rect x={originX - contentW * 2} y={originY - contentH * 2} width={contentW * 5} height={contentH * 5} fill="url(#board-haze-c)" opacity="0.62" />
-
-          {backgroundStars.map((star, index) => (
-            <circle
-              key={`star-${index}`}
-              cx={star.x}
-              cy={star.y}
-              r={star.r}
-              fill="#c8d3e6"
-              opacity={star.opacity}
-            />
-          ))}
-        </g>
-
-        <g pointerEvents="none">
-          {visibleLinkPairs.map(([fromIndex, toIndex]) => {
-            const from = systemsByIndex.get(fromIndex);
-            const to = systemsByIndex.get(toIndex);
-            if (!from || !to) return null;
+          {visibleLinkPairs.map(link => {
+            const dashArray = `${Math.max(4, hexR * 0.095)} ${Math.max(5, hexR * 0.12)}`;
             return (
-              <g key={`lk-${fromIndex}-${toIndex}`}>
+              <g key={`lk-${link.fromIndex}-${link.toIndex}`}>
                 <line
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  stroke="rgba(8, 12, 20, 0.72)"
-                  strokeWidth={Math.max(1.8, hexR * 0.05)}
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke="rgba(146, 165, 204, 0.2)"
+                  strokeWidth={Math.max(2.4, hexR * 0.058)}
                   strokeLinecap="round"
-                  opacity="0.76"
+                  strokeDasharray={dashArray}
+                  opacity="0.84"
+                  filter="url(#board-soft-glow)"
                 />
                 <line
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  stroke="rgba(190, 205, 230, 0.46)"
-                  strokeWidth={Math.max(1, hexR * 0.024)}
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke="rgba(214, 226, 246, 0.72)"
+                  strokeWidth={Math.max(1.1, hexR * 0.026)}
                   strokeLinecap="round"
-                  strokeDasharray={`${Math.max(3, hexR * 0.085)} ${Math.max(5, hexR * 0.11)}`}
+                  strokeDasharray={dashArray}
                   filter="url(#board-soft-glow)"
                 />
               </g>
@@ -881,12 +1066,13 @@ export function GameBoard({
         </g>
 
         {systems.map(system => {
-          const owner = system.ownerIndex >= 0 ? playersByIndex.get(system.ownerIndex) ?? null : null;
+          const displayedOwnerIndex = displayedOwnerIndexBySystem.get(system.index) ?? system.ownerIndex;
+          const owner = displayedOwnerIndex >= 0 ? playersByIndex.get(displayedOwnerIndex) ?? null : null;
           const ownerBaseHex = owner ? playerBaseColor(owner) : null;
           const ownerAccentHex = owner ? playerAccent(owner) : null;
           const baseColor = ownerBaseHex ? darken(ownerBaseHex, 0.78) : '#1f2632';
           const accentColor = ownerAccentHex ? darken(ownerAccentHex, 0.84) : '#465267';
-          const buildQty = buildOrderBySystem.get(system.index);
+          const displayedGarrison = displayedGarrisonBySystem.get(system.index) ?? system.garrison;
           const projLabels = projectLabelsByTarget.get(system.index) ?? [];
           const cx = system.x;
           const cy = system.y;
@@ -914,7 +1100,13 @@ export function GameBoard({
                 clearHeldAction();
                 onCancelPlacement(system.index);
               }}
-              onClick={() => onSelectSystem(system.index)}
+              onClick={event => {
+                event.stopPropagation();
+                if (consumePanClick()) {
+                  return;
+                }
+                onSelectSystem(system.index);
+              }}
             >
               <polygon
                 points={hexPoints(cx, cy, outerR)}
@@ -985,7 +1177,7 @@ export function GameBoard({
                 letterSpacing="-0.04em"
                 fontFamily="Oxanium, Chakra Petch, sans-serif"
               >
-                {system.garrison}
+                {displayedGarrison}
               </text>
 
               <text
@@ -1031,33 +1223,6 @@ export function GameBoard({
                 })}
               </g>
 
-              {buildQty != null && buildQty > 0 && (
-                <g>
-                  <rect
-                    x={cx - hexR * 0.18}
-                    y={cy + hexR * 0.31}
-                    width={hexR * 0.36}
-                    height={hexR * 0.14}
-                    rx={hexR * 0.06}
-                    fill="rgba(105, 215, 242, 0.1)"
-                    stroke="rgba(105, 215, 242, 0.32)"
-                    strokeWidth={Math.max(0.8, hexR * 0.012)}
-                  />
-                  <text
-                    x={cx}
-                    y={cy + hexR * 0.41}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize={badgeFontSize}
-                    fill="#c9f7ff"
-                    fontWeight="600"
-                    fontFamily="Oxanium, Chakra Petch, sans-serif"
-                  >
-                    +{buildQty}
-                  </text>
-                </g>
-              )}
-
               {projLabels.length > 0 && (
                 <g>
                   <rect
@@ -1094,9 +1259,9 @@ export function GameBoard({
             const cx = system.x;
             const cy = system.y;
             const outerR = hexR;
-            const selected = selectedSystemIndex === system.index;
             const armedMove = armedMoveSource === system.index;
             const highlight = systemHighlights.get(system.index);
+            const selected = selectedSystemIndex === system.index && highlight !== 'source' && !armedMove;
 
             let stroke: string | null = null;
             let strokeWidth = Math.max(1.1, hexR * 0.018);
@@ -1104,12 +1269,7 @@ export function GameBoard({
             let filter: string | undefined;
             let radius = outerR + hexR * 0.024;
 
-            if (selected) {
-              stroke = 'rgba(226, 245, 255, 0.9)';
-              strokeWidth = Math.max(1.8, hexR * 0.028);
-              filter = 'url(#board-selection-glow)';
-              radius = outerR + hexR * 0.03;
-            } else if (highlight === 'project-source') {
+            if (highlight === 'project-source') {
               stroke = 'rgba(204, 116, 255, 0.82)';
               strokeWidth = Math.max(1.5, hexR * 0.024);
               filter = 'url(#board-magenta-glow)';
@@ -1142,6 +1302,11 @@ export function GameBoard({
               strokeDasharray = `${Math.max(2, hexR * 0.06)} ${Math.max(3, hexR * 0.07)}`;
               filter = 'url(#board-soft-glow)';
               radius = outerR + hexR * 0.024;
+            } else if (selected) {
+              stroke = 'rgba(226, 245, 255, 0.9)';
+              strokeWidth = Math.max(1.8, hexR * 0.028);
+              filter = 'url(#board-selection-glow)';
+              radius = outerR + hexR * 0.03;
             }
 
             return stroke ? (
@@ -1160,17 +1325,14 @@ export function GameBoard({
         </g>
 
         <g pointerEvents="none">
-          {tannhauserLinks.map(link => {
-            const from = systemsByIndex.get(link.fromIndex);
-            const to = systemsByIndex.get(link.toIndex);
-            if (!from || !to) return null;
+          {tannhauserSegments.map(link => {
             return (
               <line
-                key={`th-${link.fromIndex}-${link.toIndex}`}
-                x1={from.x}
-                y1={from.y}
-                x2={to.x}
-                y2={to.y}
+                key={link.key}
+                x1={link.source.x}
+                y1={link.source.y}
+                x2={link.target.x}
+                y2={link.target.y}
                 stroke="rgba(208, 92, 255, 0.72)"
                 strokeWidth={Math.max(1.2, hexR * 0.04)}
                 strokeLinecap="round"
@@ -1725,13 +1887,7 @@ export function GameBoard({
             const editorRadius = Math.max(10, hexR * 0.16);
 
             return (
-              <g
-                key={`mv-${order.sourceIndex}-${order.targetIndex}-${index}`}
-                onClick={event => {
-                  event.stopPropagation();
-                  onSelectMoveOrder(order.sourceIndex, order.targetIndex);
-                }}
-              >
+              <g key={`mv-${order.sourceIndex}-${order.targetIndex}-${index}`}>
                 <path
                   d={curvePath}
                   fill="none"
@@ -1741,30 +1897,42 @@ export function GameBoard({
                   markerEnd="url(#board-move-arrow)"
                   opacity={selectedOrder ? 0.98 : 0.92}
                   filter={selectedOrder ? 'url(#board-soft-glow)' : undefined}
-                />
-                <circle
-                  cx={mx}
-                  cy={my}
-                  r={selectedOrder ? badgeR * 1.16 : badgeR}
-                  fill="rgba(7, 10, 18, 0.95)"
-                  stroke={selectedOrder ? '#f6fbff' : moveColor}
-                  strokeWidth={Math.max(1, hexR * 0.015)}
-                  opacity="0.95"
-                  filter="url(#board-soft-glow)"
-                />
-                <text
-                  x={mx}
-                  y={my + badgeR * 0.06}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={Math.max(8, badgeR * 0.9)}
-                  fill="#f7fbff"
-                  fontWeight="600"
-                  fontFamily="Oxanium, Chakra Petch, sans-serif"
                   pointerEvents="none"
+                />
+                <g
+                  className="cursor-pointer"
+                  onClick={event => {
+                    event.stopPropagation();
+                    if (consumePanClick()) {
+                      return;
+                    }
+                    onSelectMoveOrder(order.sourceIndex, order.targetIndex);
+                  }}
                 >
-                  {order.quantity}
-                </text>
+                  <circle
+                    cx={mx}
+                    cy={my}
+                    r={selectedOrder ? badgeR * 1.16 : badgeR}
+                    fill="rgba(7, 10, 18, 0.95)"
+                    stroke={selectedOrder ? '#f6fbff' : moveColor}
+                    strokeWidth={Math.max(1, hexR * 0.015)}
+                    opacity="0.95"
+                    filter="url(#board-soft-glow)"
+                  />
+                  <text
+                    x={mx}
+                    y={my + badgeR * 0.06}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={Math.max(8, badgeR * 0.9)}
+                    fill="#f7fbff"
+                    fontWeight="600"
+                    fontFamily="Oxanium, Chakra Petch, sans-serif"
+                    pointerEvents="none"
+                  >
+                    {order.quantity}
+                  </text>
+                </g>
 
                 {selectedOrder && (
                   <g>

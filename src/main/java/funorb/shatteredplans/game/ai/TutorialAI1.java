@@ -379,19 +379,18 @@ public class TutorialAI1 implements AI {
       }
 
       if (this.gameState.gameOptions.projectsAllowed) {
-        if (this._n.researchPoints[0] >= 5) {
+        if (this._n.researchPoints[0] >= GameState.MAX_RESEARCH_POINTS) {
           this.h150();
         }
 
-        if (this._n.researchPoints[1] >= 5) {
+        if (this._n.researchPoints[1] >= GameState.MAX_RESEARCH_POINTS) {
           this.f150();
         }
 
-        if (this._n.researchPoints[2] >= 5) {
+        if (this._n.researchPoints[2] >= GameState.MAX_RESEARCH_POINTS) {
           this.b487();
         }
 
-        if (this._n.researchPoints[3] >= 5) {
           this.e423();
         }
       }

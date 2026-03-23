@@ -484,7 +484,7 @@ public final class TaskAI implements AI {
         }
       }
 
-      if (this.player.researchPoints[GameState.ResourceType.ENERGY] >= 5 && !deployedStellarBomb) {
+      if (this.player.researchPoints[GameState.ResourceType.ENERGY] >= GameState.MAX_RESEARCH_POINTS && !deployedStellarBomb) {
         for (final StarSystem neighbor : task.system.neighbors) {
           if (neighbor.owner != null && this.player != neighbor.owner && (int) ((double) adjustedFleetCost * 0.8D) <= neighbor.garrison && neighbor.garrison > 10) {
             this.deployStellarBomb(neighbor);
@@ -499,7 +499,7 @@ public final class TaskAI implements AI {
         }
       }
 
-      if (this.player.researchPoints[0] >= 5 && !_nob && !task.system.hasDefensiveNet && (adjustedFleetCost > this.forceFleetsAvailableToMove[forceIndex] || adjustedFleetCost > 20)) {
+      if (this.player.researchPoints[0] >= GameState.MAX_RESEARCH_POINTS && !_nob && !task.system.hasDefensiveNet && (adjustedFleetCost > this.forceFleetsAvailableToMove[forceIndex] || adjustedFleetCost > 20)) {
         this.a815(task.system);
         if (task.fleetCost > 1) {
           task.fleetCost /= 2;
@@ -823,7 +823,7 @@ public final class TaskAI implements AI {
   }
 
   private void a815(final StarSystem var1) {
-    if (this.player.researchPoints[0] < 5) {
+    if (this.player.researchPoints[0] < GameState.MAX_RESEARCH_POINTS) {
       throw new RuntimeException(this.player.name + " is trying to deploy a Defensive Net it doesn't have at star " + var1.name);
     } else if (_nob) {
       final ProjectOrder var3 = projectOrders.stream()
@@ -1060,7 +1060,7 @@ public final class TaskAI implements AI {
   }
 
   private void deployTerraforming() {
-    if (this.player.researchPoints[GameState.ResourceType.BIOMASS] >= 5) {
+    if (this.player.researchPoints[GameState.ResourceType.BIOMASS] >= GameState.MAX_RESEARCH_POINTS) {
       StarSystem var2 = null;
       int var3 = Integer.MAX_VALUE;
       int var5 = Integer.MAX_VALUE;
@@ -1342,7 +1342,7 @@ public final class TaskAI implements AI {
   }
 
   private void deployTannhauser() {
-    if (this.player.researchPoints[3] >= 5) {
+    if (this.player.researchPoints[3] >= GameState.MAX_RESEARCH_POINTS) {
       StarSystem var6;
       int var8;
       if (this.aggressiveness < 50 && this.peacefulness < 50 && this.player.contiguousForces.size() > 1) {
@@ -1530,7 +1530,7 @@ public final class TaskAI implements AI {
   }
 
   private void deployStellarBomb(final StarSystem target) {
-    if (this.player.researchPoints[GameState.ResourceType.ENERGY] < 5) {
+    if (this.player.researchPoints[GameState.ResourceType.ENERGY] < GameState.MAX_RESEARCH_POINTS) {
       throw new RuntimeException(this.player.name + " is trying to deploy a Stellar Bomb it doesn't have at star " + target.name);
     }
     if (deployedStellarBomb) {
@@ -1623,7 +1623,7 @@ public final class TaskAI implements AI {
 
       adjustedFleetCost = this.adjustFleetCost(task.fleetCost);
       boolean var26 = totalFleetsAvailableToAttack >= adjustedFleetCost;
-      if (!var26 && !deployedStellarBomb && this.player.researchPoints[2] >= 5 && task.system.garrison >= 5) {
+      if (!var26 && !deployedStellarBomb && this.player.researchPoints[2] >= GameState.MAX_RESEARCH_POINTS && task.system.garrison >= 5) {
         int var12 = task.fleetCost;
         if (task.system.hasDefensiveNet) {
           var12 /= 2;
@@ -1655,7 +1655,7 @@ public final class TaskAI implements AI {
         }
       }
 
-      if (var26 && !deployedStellarBomb && this.player.researchPoints[2] >= 5 && task.system.garrison >= 25) {
+      if (var26 && !deployedStellarBomb && this.player.researchPoints[2] >= GameState.MAX_RESEARCH_POINTS && task.system.garrison >= 25) {
         this.deployStellarBomb(task.system);
         task.fleetCost = task.system.garrison / 2;
         if (task.system.owner != null) {

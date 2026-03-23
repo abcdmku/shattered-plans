@@ -47,7 +47,7 @@ import java.util.stream.Stream;
 
 public final class GameState {
   public static final int NUM_RESOURCES = 4;
-  public static final int MAX_RESEARCH_POINTS = 5;
+  public static final int MAX_RESEARCH_POINTS = 20;
   @MagicConstant(valuesFromClass = ResourceType.class)
   public static final int[] RESOURCE_TYPES = {ResourceType.METAL, ResourceType.BIOMASS, ResourceType.ENERGY, ResourceType.EXOTICS};
   public static final int MILLIS_PER_TICK = 1000 / 50;
@@ -368,7 +368,7 @@ public final class GameState {
 
           for (int i = 0; i < NUM_RESOURCES; ++i) {
             if (roll < leftover[i]) {
-              if (player.researchPoints[i] >= 5) {
+              if (player.researchPoints[i] >= MAX_RESEARCH_POINTS) {
                 if (player.stats != null) {
                   ++player.stats.wastedResearch;
                 }
@@ -1452,7 +1452,7 @@ public final class GameState {
         ok = false;
       } else if (order.target == null) {
         ok = false;
-      } else if (player.researchPoints[order.type] < 5) {
+      } else if (player.researchPoints[order.type] < MAX_RESEARCH_POINTS) {
         ok = false;
       } else if (order.type == ResourceType.METAL) {
         if (order.target.owner != player) {

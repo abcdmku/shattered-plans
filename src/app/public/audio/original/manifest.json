@@ -1,0 +1,33 @@
+{
+  "sfx": {
+    "ship-selection": "/audio/original/sfx/ship-selection.wav",
+    "ship-move-order": "/audio/original/sfx/ship-move-order.wav",
+    "ship-attack-order": "/audio/original/sfx/ship-attack-order.wav",
+    "factory-noise": "/audio/original/sfx/factory-noise.wav",
+    "explosion": "/audio/original/sfx/explosion.wav",
+    "next-open": "/audio/original/sfx/next-open.wav",
+    "next-close": "/audio/original/sfx/next-close.wav"
+  },
+  "music": {
+    "intro": {
+      "src": "/audio/original/music/intro.wav",
+      "loop": true
+    },
+    "ingame": {
+      "src": "/audio/original/music/ingame.wav",
+      "loop": true
+    },
+    "ingame-two": {
+      "src": "/audio/original/music/ingame-two.wav",
+      "loop": true
+    },
+    "win": {
+      "src": "/audio/original/music/win.wav",
+      "loop": false
+    },
+    "lose": {
+      "src": "/audio/original/music/lose.wav",
+      "loop": false
+    }
+  }
+}

@@ -172,6 +172,7 @@ export interface ResolvedEventSnapshot {
   systemIndex: number | null;
   quantity: number;
   projectType: string | null;
+  ownerAtCombatStart: number | null;
   combatants: CombatantSnapshot[];
   victorIndex: number | null;
   fleetsAtEnd: number;

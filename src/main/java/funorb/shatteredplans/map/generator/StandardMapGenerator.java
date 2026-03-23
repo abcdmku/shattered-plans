@@ -48,8 +48,17 @@ public class StandardMapGenerator implements MapGenerator {
     return new StarSystem(index, posnX, posnY, 0);
   }
 
-  private static void linkConnectedComponents(final Random random, final StarSystem[] tiles, final int tileWidth, final StarSystem[] systems, final int connectedComponentCount) {
+  private static int linkConnectedComponents(final Random random,
+                                             final StarSystem[] tiles,
+                                             final int tileWidth,
+                                             final StarSystem[] systems,
+                                             final int connectedComponentCount,
+                                             final boolean requireClearPath,
+                                             final int minimumConnectionDistance) {
     final int systemCount = systems.length;
+    int linksAdded = 0;
+    final int minimumConnectionDistanceSquared = minimumConnectionDistance * minimumConnectionDistance;
+
     for (int ci = 0; ci < connectedComponentCount; ++ci) {
       componentLoop:
       for (int cj = ci + 1; cj < connectedComponentCount; ++cj) {
@@ -57,61 +66,75 @@ public class StandardMapGenerator implements MapGenerator {
 
         for (int si = 0; si < systemCount; ++si) {
           final StarSystem system1 = systems[(si + roll) % systemCount];
-          if (system1.garrison == ci) {
-            connectionLoop:
-            for (final StarSystem system2 : system1.potentialWormholeConnections) {
-              if (system2.garrison == cj) {
-                if (system1.neighbors != null) {
-                  for (final StarSystem neighbor : system1.neighbors) {
-                    if (neighbor == system2) {
-                      continue connectionLoop;
-                    }
-                  }
-                }
+          if (system1.garrison != ci) {
+            continue;
+          }
 
-                int tile1 = 0;
-                int tile2 = 0;
-                for (int i = 0; i < tiles.length; ++i) {
-                  if (tiles[i] != null) {
-                    if (system1.index == tiles[i].index) {
-                      tile1 = i;
-                    }
-                    if (system2.index == tiles[i].index) {
-                      tile2 = i;
-                    }
-                  }
-                }
-
-                if (tile1 > tile2) {
-                  final int tmp = tile1;
-                  tile1 = tile2;
-                  tile2 = tmp;
-                }
-
-                final int dy = (tile2 / tileWidth) - (tile1 / tileWidth);
-                if (dy != 0 && tile2 < (dy * tileWidth) + tile1) {
-                  final int tmp = tile2;
-                  tile2 = tile1 + dy * tileWidth;
-                  tile1 = tmp - (tileWidth * dy);
-                }
-
-                for (int i = tile1 + 1; i < tile2; ++i) {
-                  if (tiles[i] != null
-                      && tiles[i].index != system1.index
-                      && tiles[i].index != system2.index
-                      && !connectionWouldNotIntersect(system1, system2, tiles[i])) {
-                    continue connectionLoop;
-                  }
-                }
-
-                StarSystem.linkNeighbors(system1, system2);
-                continue componentLoop;
-              }
+          connectionLoop:
+          for (final StarSystem system2 : system1.potentialWormholeConnections) {
+            if (system2.garrison != cj || system1.hasNeighbor(system2)) {
+              continue;
             }
+
+            if (minimumConnectionDistance > 0
+                && MathUtil.euclideanDistanceSquared(system1.posnX - system2.posnX, system1.posnY - system2.posnY) < minimumConnectionDistanceSquared) {
+              continue;
+            }
+
+            if (requireClearPath && !connectionWouldNotIntersectAnySystem(system1, system2, tiles, tileWidth)) {
+              continue connectionLoop;
+            }
+
+            StarSystem.linkNeighbors(system1, system2);
+            ++linksAdded;
+            continue componentLoop;
           }
         }
       }
     }
+
+    return linksAdded;
+  }
+
+  private static boolean connectionWouldNotIntersectAnySystem(final StarSystem system1, final StarSystem system2, final StarSystem[] tiles, final int tileWidth) {
+    int tile1 = tileIndexOf(tiles, system1);
+    int tile2 = tileIndexOf(tiles, system2);
+    if (tile1 == -1 || tile2 == -1) {
+      return true;
+    }
+
+    if (tile1 > tile2) {
+      final int tmp = tile1;
+      tile1 = tile2;
+      tile2 = tmp;
+    }
+
+    final int dy = (tile2 / tileWidth) - (tile1 / tileWidth);
+    if (dy != 0 && tile2 < (dy * tileWidth) + tile1) {
+      final int tmp = tile2;
+      tile2 = tile1 + dy * tileWidth;
+      tile1 = tmp - (tileWidth * dy);
+    }
+
+    for (int i = tile1 + 1; i < tile2; ++i) {
+      if (tiles[i] != null
+          && tiles[i].index != system1.index
+          && tiles[i].index != system2.index
+          && !connectionWouldNotIntersect(system1, system2, tiles[i])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private static int tileIndexOf(final StarSystem[] tiles, final StarSystem system) {
+    for (int i = 0; i < tiles.length; ++i) {
+      if (tiles[i] != null && tiles[i].index == system.index) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   private static boolean connectionWouldNotIntersect(final StarSystem system1, final StarSystem system2, final StarSystem system) {
@@ -231,10 +254,25 @@ public class StandardMapGenerator implements MapGenerator {
     }
   }
 
-  private void linkNeighbors(final Map map) {
+  private void linkNeighbors(final Map map) throws MapGenerationFailure {
     linkAdjacentNeighbors(this.tiles, this.tileWidth, this.tileHeight);
-    final int connectedComponentCount = markConnectedComponents(map.systems);
-    linkConnectedComponents(map.random, this.tiles, this.tileWidth, map.systems, connectedComponentCount);
+    while (true) {
+      final int connectedComponentCount = markConnectedComponents(map.systems);
+      if (connectedComponentCount <= 1) {
+        break;
+      }
+
+      int linksAdded = linkConnectedComponents(map.random, this.tiles, this.tileWidth, map.systems, connectedComponentCount, true, 340);
+      if (linksAdded == 0) {
+        linksAdded = linkConnectedComponents(map.random, this.tiles, this.tileWidth, map.systems, connectedComponentCount, true, 0);
+      }
+      if (linksAdded == 0) {
+        linksAdded = linkConnectedComponents(map.random, this.tiles, this.tileWidth, map.systems, connectedComponentCount, false, 0);
+      }
+      if (linksAdded == 0) {
+        throw new MapGenerationFailure("Failed to connect all systems.");
+      }
+    }
 
     Arrays.stream(map.systems).forEach(StarSystem::sortNeighbors);
     for (final StarSystem system : map.systems) {
@@ -244,6 +282,9 @@ public class StandardMapGenerator implements MapGenerator {
     }
 
     map.recalculateDistances();
+    if (markConnectedComponents(map.systems) > 1) {
+      throw new MapGenerationFailure("Generated map is disconnected.");
+    }
   }
 
   private void assignSystemTypes(final Map map) {

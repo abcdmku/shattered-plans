@@ -923,7 +923,7 @@ public final class GameUI {
     var3.addChild(var6);
     final Icon var7 = new Icon(0, 2 + Menu.SMALL_FONT.ascent, PROJECT_ICONS[var1]);
     var3.addChild(var7);
-    if (var0 == 5) {
+    if (var0 >= GameState.MAX_RESEARCH_POINTS) {
       final Label var8 = new Label(PROJECT_ICONS[var1].width, 1 + Menu.SMALL_FONT.ascent + 2 + PROJECT_ICONS[var1].height / 8, 130 - PROJECT_ICONS[var1].width, PROJECT_ICONS[var1].height, StringConstants.TEXT_READY);
       var3.addChild(var8);
       var2.statusLabels[var1] = var8;
@@ -936,7 +936,7 @@ public final class GameUI {
   }
 
   private static Sprite a919ec(final int var0, final int var1) {
-    int var2 = (-(3 * PROJECT_ICONS[var0].width / 4) + 130) * var1 / 5;
+    int var2 = (-(3 * PROJECT_ICONS[var0].width / 4) + 130) * var1 / GameState.MAX_RESEARCH_POINTS;
     if (var2 <= 0) {
       var2 = 1;
     }
@@ -1787,7 +1787,7 @@ public final class GameUI {
       final ScrollView<?> var4 = a301e(this.gameSession.localPlayer.researchPoints[i], i, var2);
       var4.setPosition(this.projectsPanel.content.x, this.projectsPanel.content.contentHeight + this.projectsPanel.content.y);
       this.projectsPanel.content.addChild(var4);
-      if (this.gameSession.localPlayer.researchPoints[i] >= 5) {
+      if (this.gameSession.localPlayer.researchPoints[i] >= GameState.MAX_RESEARCH_POINTS) {
         this.projectsPanel.flashing = true;
         this.projectsButton.activate();
       }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { GamePlayer, OrdersSnapshot, ResolvedEventSnapshot, SystemSnapshot, TannhauserSnapshot } from '../../shared/types';
 import { RESOURCE_DISPLAY_META, playerAccent, playerBaseColor, shortProjectLabel } from '../../shared/game';
 import { playOriginalSound, type OriginalSoundKey } from '../../shared/audio';
@@ -322,6 +322,21 @@ function straightLinkSegment(
   };
 }
 
+function visibleConnectionSegment(
+  source: BoardPoint,
+  target: BoardPoint,
+  hexR: number
+): { source: BoardPoint; target: BoardPoint; visibleLength: number } | null {
+  // Systems placed on adjacent hexes are 200 units apart in map space; those
+  // links are already visually implicit and should not render as dashed lines.
+  if (pointDistance(source, target) <= 210) {
+    return null;
+  }
+
+  const segment = straightLinkSegment(source, target, hexR);
+  return segment.visibleLength > Math.max(8, hexR * 0.1) ? segment : null;
+}
+
 function movementPath(source: BoardPoint, target: BoardPoint, hexR: number): MovementPath {
   const endpoints = movementEndpoints(source, target, hexR);
   const control = movementCurveControl(endpoints.source, endpoints.target, hexR);
@@ -340,20 +355,34 @@ function quadraticPoint(source: BoardPoint, control: BoardPoint, target: BoardPo
   };
 }
 
-function combatantBars(
-  combatants: ResolvedEventSnapshot['combatants'],
-  ownerAtCombatStart: number | null
-): ResolvedCombatantBar[] {
-  return combatants
+function combatantBars(combatants: ResolvedEventSnapshot['combatants']): ResolvedCombatantBar[] {
+  const aggregated = new Map<string, ResolvedCombatantBar>();
+
+  combatants
     .filter(combatant => combatant.fleetsAtStart > 0)
-    .filter(combatant => !(ownerAtCombatStart == null && combatant.playerIndex === null))
-    .map(combatant => ({
-      playerIndex: combatant.playerIndex,
-      sourceIndex: combatant.sourceIndex,
-      fleetsAtStart: combatant.fleetsAtStart,
-      fleetsDestroyed: combatant.fleetsDestroyed,
-      fleetsRetreated: combatant.fleetsRetreated
-    }))
+    .forEach(combatant => {
+      const key = combatant.playerIndex === null ? 'neutral' : `player:${combatant.playerIndex}`;
+      const existing = aggregated.get(key);
+      if (existing) {
+        existing.fleetsAtStart += combatant.fleetsAtStart;
+        existing.fleetsDestroyed += combatant.fleetsDestroyed;
+        existing.fleetsRetreated += combatant.fleetsRetreated;
+        if (existing.sourceIndex === null && combatant.sourceIndex !== null) {
+          existing.sourceIndex = combatant.sourceIndex;
+        }
+        return;
+      }
+
+      aggregated.set(key, {
+        playerIndex: combatant.playerIndex,
+        sourceIndex: combatant.sourceIndex,
+        fleetsAtStart: combatant.fleetsAtStart,
+        fleetsDestroyed: combatant.fleetsDestroyed,
+        fleetsRetreated: combatant.fleetsRetreated
+      });
+    });
+
+  return [...aggregated.values()]
     .sort((left, right) => right.fleetsAtStart - left.fleetsAtStart);
 }
 
@@ -452,6 +481,10 @@ function combatFrame(elapsedMs: number): { label: string; fromIndex: number; toI
   }
 
   return { label: 'R3', fromIndex: 3, toIndex: 3, t: 0 };
+}
+
+function combatResidentFleetsAtStart(event: Pick<ResolvedEventSnapshot, 'combatants'>): number {
+  return event.combatants.find(combatant => combatant.sourceIndex === null)?.fleetsAtStart ?? 0;
 }
 
 function resolvedEventSignature(events: ResolvedEventSnapshot[]): string {
@@ -621,7 +654,7 @@ export function GameBoard({
       }
 
       const victor = event.victorIndex === null ? null : playersByIndex.get(event.victorIndex) ?? null;
-      const combatants = combatantBars(event.combatants, event.ownerAtCombatStart)
+      const combatants = combatantBars(event.combatants)
         .map(combatant => {
           const combatantPlayer = combatant.playerIndex === null ? null : playersByIndex.get(combatant.playerIndex) ?? null;
           const endFleets = Math.max(0, combatant.fleetsAtStart - combatant.fleetsDestroyed - combatant.fleetsRetreated);
@@ -666,7 +699,7 @@ export function GameBoard({
     resolvedAnimationStartRef.current = null;
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!resolvedEvents.length) {
       stopResolvedPlayback();
       setShowResolvedEvents(false);
@@ -793,19 +826,13 @@ export function GameBoard({
     [systems]
   );
   const visibleLinkPairs = useMemo(() => {
-    const minimumVisibleLinkDistance = Math.max(340, hexR * 3.55);
-    const minimumVisibleGap = Math.max(10, hexR * 0.18);
     return linkPairs.flatMap(([fromIndex, toIndex]) => {
       const from = systemsByIndex.get(fromIndex);
       const to = systemsByIndex.get(toIndex);
       if (!from || !to) return [];
 
-      if (pointDistance(from, to) <= minimumVisibleLinkDistance) {
-        return [];
-      }
-
-      const segment = straightLinkSegment(from, to, hexR);
-      if (segment.visibleLength <= minimumVisibleGap) {
+      const segment = visibleConnectionSegment(from, to, hexR);
+      if (!segment) {
         return [];
       }
 
@@ -820,13 +847,8 @@ export function GameBoard({
         return [];
       }
 
-      const minimumVisibleLinkDistance = Math.max(340, hexR * 3.55);
-      if (pointDistance(from, to) <= minimumVisibleLinkDistance) {
-        return [];
-      }
-
-      const segment = straightLinkSegment(from, to, hexR);
-      if (segment.visibleLength <= Math.max(10, hexR * 0.18)) {
+      const segment = visibleConnectionSegment(from, to, hexR);
+      if (!segment) {
         return [];
       }
 
@@ -894,7 +916,112 @@ export function GameBoard({
     systems
   ]);
 
-  const displayedGarrisonBySystem = useMemo(() => {
+  const resolvedDisplayedGarrisonBySystem = useMemo(() => {
+    const displayed = new Map<number, number>();
+    systems.forEach(system => displayed.set(system.index, system.garrison));
+
+    if (!showResolvedEvents || !resolvedEvents.length) {
+      return displayed;
+    }
+
+    resolvedEvents.forEach(event => {
+      if (event.kind === 'RETREAT' && event.targetIndex !== null) {
+        displayed.set(
+          event.targetIndex,
+          Math.max(0, (displayed.get(event.targetIndex) ?? 0) - event.quantity)
+        );
+      }
+    });
+
+    resolvedEvents.forEach(event => {
+      if (event.kind !== 'COMBAT') {
+        return;
+      }
+
+      event.combatants.forEach(combatant => {
+        if (combatant.sourceIndex === null || combatant.fleetsRetreated <= 0) {
+          return;
+        }
+
+        const source = systemsByIndex.get(combatant.sourceIndex);
+        if (!source || source.ownerIndex !== combatant.playerIndex) {
+          return;
+        }
+
+        displayed.set(
+          combatant.sourceIndex,
+          Math.max(0, (displayed.get(combatant.sourceIndex) ?? source.garrison) - combatant.fleetsRetreated)
+        );
+      });
+    });
+
+    resolvedEvents.forEach(event => {
+      if (event.kind === 'COMBAT' && event.systemIndex !== null) {
+        displayed.set(event.systemIndex, combatResidentFleetsAtStart(event));
+        return;
+      }
+
+      if (event.kind === 'COLLAPSE' && event.sourceIndex !== null) {
+        displayed.set(event.sourceIndex, event.quantity);
+      }
+    });
+
+    const instantCaptureChangeAtMs = resolvedTimeline.combatStartMs > 0
+      ? resolvedTimeline.combatStartMs
+      : Math.max(resolvedTimeline.buildEndMs, resolvedTimeline.moveEndMs);
+
+    resolvedEvents.forEach((event, index) => {
+      if (event.kind === 'COMBAT' && event.systemIndex !== null) {
+        const changeAtMs = isInstantNeutralCapture(event)
+          ? instantCaptureChangeAtMs
+          : resolvedTimeline.combatEndMs;
+
+        if (resolvedElapsedMs >= changeAtMs) {
+          displayed.set(event.systemIndex, event.fleetsAtEnd);
+
+          event.combatants.forEach(combatant => {
+            if (combatant.sourceIndex === null || combatant.fleetsRetreated <= 0) {
+              return;
+            }
+
+            const source = systemsByIndex.get(combatant.sourceIndex);
+            if (!source || source.ownerIndex !== combatant.playerIndex) {
+              return;
+            }
+
+            displayed.set(
+              combatant.sourceIndex,
+              (displayed.get(combatant.sourceIndex) ?? source.garrison) + combatant.fleetsRetreated
+            );
+          });
+        }
+
+        return;
+      }
+
+      if (event.kind === 'COLLAPSE' && event.sourceIndex !== null) {
+        const collapseAtMs = resolvedTimeline.retreatStartMs + index * RESOLVED_RETREAT_STAGGER_MS;
+        if (resolvedElapsedMs >= collapseAtMs) {
+          displayed.set(event.sourceIndex, 0);
+        }
+      }
+    });
+
+    return displayed;
+  }, [
+    resolvedElapsedMs,
+    resolvedEvents,
+    resolvedTimeline.buildEndMs,
+    resolvedTimeline.combatEndMs,
+    resolvedTimeline.combatStartMs,
+    resolvedTimeline.moveEndMs,
+    resolvedTimeline.retreatStartMs,
+    showResolvedEvents,
+    systems,
+    systemsByIndex
+  ]);
+
+  const plannedDisplayedGarrisonBySystem = useMemo(() => {
     const displayed = new Map<number, number>();
     systems.forEach(system => displayed.set(system.index, system.garrison));
 
@@ -908,6 +1035,9 @@ export function GameBoard({
 
     return displayed;
   }, [orders.buildOrders, orders.moveOrders, systems]);
+  const displayedGarrisonBySystem = showResolvedEvents
+    ? resolvedDisplayedGarrisonBySystem
+    : plannedDisplayedGarrisonBySystem;
   const projectLabelsByTarget = new Map<number, string[]>();
   for (const proj of orders.projectOrders) {
     if (proj.targetIndex === null) continue;
@@ -1776,7 +1906,7 @@ export function GameBoard({
                     const numberY = barBaseY - barHeight - Math.max(7, hexR * 0.11);
 
                     return (
-                      <g key={`${combat.key}-combatant-${combatant.sourceIndex ?? 'def'}-${combatant.playerIndex ?? 'neutral'}-${combatantIndex}`}>
+                      <g key={`${combat.key}-combatant-${combatant.playerIndex ?? 'neutral'}-${combatantIndex}`}>
                         <rect
                           x={trackX}
                           y={chartTop}

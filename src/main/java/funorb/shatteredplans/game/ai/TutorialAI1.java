@@ -391,6 +391,7 @@ public class TutorialAI1 implements AI {
           this.b487();
         }
 
+        if (this._n.researchPoints[3] >= GameState.MAX_RESEARCH_POINTS) {
           this.e423();
         }
       }

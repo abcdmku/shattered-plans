@@ -1477,18 +1477,17 @@ public final class WebState {
               0,
               0));
         } else if (event instanceof final CombatEngagementLog combatLog) {
+          final List<CombatantSnapshot> combatants = combatantSnapshots(combatLog);
           this.resolvedEvents.add(new ResolvedEventSnapshot(
               "COMBAT",
               null,
               null,
               null,
               combatLog.system.index,
-              combatLog.events.stream().mapToInt(combatant -> combatant.fleetsAtStart).sum(),
+              combatants.stream().mapToInt(CombatantSnapshot::fleetsAtStart).sum(),
               null,
               playerIndex(combatLog.ownerAtCombatStart),
-              combatLog.events.stream()
-                  .map(WebGameSession::combatantSnapshot)
-                  .toList(),
+              combatants,
               playerIndex(combatLog.victor),
               combatLog.fleetsAtCombatEnd,
               combatLog.totalKills));
@@ -1588,6 +1587,30 @@ public final class WebState {
           combatEvent.fleetsAtStart,
           combatEvent.fleetsDestroyed,
           combatEvent.fleetsRetreated);
+    }
+
+    private static List<CombatantSnapshot> combatantSnapshots(final CombatEngagementLog combatLog) {
+      final List<CombatantSnapshot> snapshots = new ArrayList<>(combatLog.events.stream()
+          .map(WebGameSession::combatantSnapshot)
+          .toList());
+
+      if (combatLog.ownerAtCombatStart == null && combatLog.fleetsAtCombatStart.length > 0) {
+        final int neutralStart = combatLog.fleetsAtCombatStart[combatLog.fleetsAtCombatStart.length - 1];
+        final boolean neutralAlreadyPresent = snapshots.stream()
+            .anyMatch(snapshot -> snapshot.playerIndex() == null && snapshot.sourceIndex() == null);
+
+        if (neutralStart > 0 && !neutralAlreadyPresent) {
+          final int neutralEnd = combatLog.victor == null ? combatLog.fleetsAtCombatEnd : 0;
+          snapshots.add(new CombatantSnapshot(
+              null,
+              null,
+              neutralStart,
+              Math.max(0, neutralStart - neutralEnd),
+              0));
+        }
+      }
+
+      return List.copyOf(snapshots);
     }
 
     private static @Nullable Integer playerIndex(final @Nullable Player player) {

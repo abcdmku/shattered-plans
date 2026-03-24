@@ -33,8 +33,13 @@ docker compose up --build
 This starts:
 
 - the Java backend on internal port `8080`
-- the web frontend on `http://localhost`
+- the web frontend on host port `8081` by default
 - the legacy TCP server on `43594`
+
+The frontend defaults to host port `8081` instead of `80`, which avoids
+conflicts with other services already listening on the default HTTP port while
+still giving deployment platforms a stable upstream target. Set
+`FRONTEND_PORT` to override it when needed.
 
 Useful environment variables:
 

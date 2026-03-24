@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ACCESS_MODE_OPTIONS, GAME_TYPE_OPTIONS, TURN_LENGTH_OPTIONS, getOptionLabel } from '../../shared/game';
+import { GALAXY_SIZE_OPTIONS, GAME_TYPE_OPTIONS, TURN_LENGTH_OPTIONS } from '../../shared/game';
 import type { LobbySnapshot, RoomSummary } from '../../shared/types';
 import { ChatPanel } from '../../shared/ui/ChatPanel';
 import { Panel } from '../../shared/ui/Panel';
@@ -13,7 +13,13 @@ interface LobbyScreenProps {
   onCreateRoom: () => void;
   onJoinRoom: (roomId: string) => void;
   onSpectateRoom: (roomId: string) => void;
-  onCreateSkirmish: (payload: { gameType: string; classicRuleset: boolean; aiPlayers: number; turnLengthIndex: number }) => void;
+  onCreateSkirmish: (payload: {
+    gameType: string;
+    galaxySize: string;
+    classicRuleset: boolean;
+    aiPlayers: number;
+    turnLengthIndex: number;
+  }) => void;
   onCreateTutorial: () => void;
   onSendChat: (message: string) => void;
 }
@@ -32,6 +38,7 @@ export function LobbyScreen({
   onSendChat
 }: LobbyScreenProps) {
   const [gameType, setGameType] = useState('CONQUEST');
+  const [galaxySize, setGalaxySize] = useState('MEDIUM');
   const [classicRuleset, setClassicRuleset] = useState(true);
   const [aiPlayers, setAiPlayers] = useState(3);
   const [turnLengthIndex, setTurnLengthIndex] = useState(0);
@@ -103,6 +110,15 @@ export function LobbyScreen({
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1">
+                  <span className="label">Map size</span>
+                  <select className="select" value={galaxySize} onChange={e => setGalaxySize(e.target.value)}>
+                    {GALAXY_SIZE_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1">
                   <span className="label">AI count</span>
                   <select className="select" value={aiPlayers} onChange={e => setAiPlayers(Number(e.target.value))}>
                     {[1, 2, 3, 4, 5].map(v => (
@@ -134,7 +150,7 @@ export function LobbyScreen({
               <button
                 className="btn btn-primary w-full"
                 disabled={!canAct}
-                onClick={() => onCreateSkirmish({ gameType, classicRuleset, aiPlayers, turnLengthIndex })}
+                onClick={() => onCreateSkirmish({ gameType, galaxySize, classicRuleset, aiPlayers, turnLengthIndex })}
               >
                 Launch
               </button>

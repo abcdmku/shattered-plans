@@ -1921,6 +1921,7 @@ public final class GameView extends AbstractGameView {
       }
 
       this.drawWormholeConnections();
+      this.drawMoveRangePreviewConnection();
 
       for (final StarSystem system : this.map.systems) {
         if (isOnScreen(this.systemBounds[system.index])) {
@@ -1972,7 +1973,73 @@ public final class GameView extends AbstractGameView {
       }
 
       this.drawWormholeConnections();
+      this.drawMoveRangePreviewConnection();
       this.i150();
+    }
+  }
+
+  private void drawMoveRangePreviewConnection() {
+    if (this.gameUI == null || this.gameUI.getPlacementMode() != GameUI.PlacementMode.MOVE_FLEET_DEST) {
+      return;
+    }
+
+    StarSystem source = null;
+    for (final StarSystem system : this.map.systems) {
+      if (this.highlightedSystems[system.index] == SystemHighlight.GREEN) {
+        source = system;
+        break;
+      }
+    }
+
+    if (source == null) {
+      return;
+    }
+
+    final int pulse = 127 + (int) ((1.0D + Math.cos(Math.PI * (double) (ShatteredPlansClient.currentTick % 50) / 25.0D)) * 64.0D);
+    for (final StarSystem target : this.map.systems) {
+      if (this.highlightedSystems[target.index] != SystemHighlight.GRAY
+          || source == target
+          || source.hasNeighbor(target)
+          || source.contiguousForce != target.contiguousForce) {
+        continue;
+      }
+
+      final int intensity = target == this.targetedSystem ? pulse : 80;
+      this.drawMoveRangePreviewConnection(source, target, intensity);
+    }
+  }
+
+  private void drawMoveRangePreviewConnection(final StarSystem source, final StarSystem target, final int intensity) {
+    final int drawX1 = this.systemDrawX[source.index];
+    final int drawY1 = this.systemDrawY[source.index];
+    final int drawX2 = this.systemDrawX[target.index];
+    final int drawY2 = this.systemDrawY[target.index];
+    float dx = (float) (drawX2 - drawX1);
+    float dy = (float) (drawY2 - drawY1);
+    final float distance = MathUtil.euclideanDistance(dx, dy);
+    if (distance <= 1.0F) {
+      return;
+    }
+
+    dx /= distance;
+    dy /= distance;
+
+    final int color = intensity * 0x10101;
+    final int maxTrim = Math.max(0, ((int) distance - 12) / 2);
+    final int sourceTrim = Math.min(this._Hb, maxTrim);
+    final int targetTrim = Math.min((int) (150.0D * this.zoomFactor), maxTrim);
+    final int lineStartX = drawX1 + (int) (dx * (float) sourceTrim);
+    final int lineStartY = drawY1 + (int) (dy * (float) sourceTrim);
+    final int lineEndX = drawX2 - (int) (dx * (float) targetTrim);
+    final int lineEndY = drawY2 - (int) (dy * (float) targetTrim);
+    if (lineStartX == lineEndX && lineStartY == lineEndY) {
+      return;
+    }
+
+    if (ShatteredPlansClient.renderQuality.antialiasWormholeConnections) {
+      a669tue(lineStartY << 4, lineEndX << 4, lineStartX << 4, color, lineEndY << 4);
+    } else {
+      drawLine(lineStartX << 4, lineStartY << 4, lineEndX << 4, lineEndY << 4, color);
     }
   }
 

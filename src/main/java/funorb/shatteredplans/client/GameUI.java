@@ -1268,6 +1268,10 @@ public final class GameUI {
     }
   }
 
+  public PlacementMode getPlacementMode() {
+    return this.gameSession.placementMode;
+  }
+
   private void highlightTerraformingCandidates() {
     this.gameSession.gameState.streamForces(this.gameSession.localPlayer).forEach(force -> {
       final int maxSurplus = force.surplusResources[force.surplusResourceRanks[0]];

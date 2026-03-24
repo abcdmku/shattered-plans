@@ -370,12 +370,24 @@ public final class WebState {
     }
 
     final GameState.GameType gameType = parseGameType(payload.path("gameType").asText("CONQUEST"), GameState.GameType.CONQUEST);
+    final GameState.GalaxySize galaxySize = parseGalaxySize(
+        payload.path("galaxySize").asText(GameState.GalaxySize.MEDIUM.name()),
+        GameState.GalaxySize.MEDIUM);
     final boolean classicRuleset = payload.path("classicRuleset").asBoolean(true);
     final int aiPlayers = clamp(payload.path("aiPlayers").asInt(SOLO_PLAYER_COUNT - 1), 1, 5);
     final int turnLengthIndex = clamp(payload.path("turnLengthIndex").asInt(0), 0, 6);
     final GameOptions options = classicRuleset ? GameOptions.CLASSIC_GAME_OPTIONS : GameOptions.STREAMLINED_GAME_OPTIONS;
 
-    session.soloGame = WebGameSession.createSoloGame(kind, session, aiPlayers, turnLengthIndex, options, gameType, this.scheduler, this::handleTurnTimer);
+    session.soloGame = WebGameSession.createSoloGame(
+        kind,
+        session,
+        aiPlayers,
+        turnLengthIndex,
+        options,
+        gameType,
+        galaxySize,
+        this.scheduler,
+        this::handleTurnTimer);
     session.spectatingGame = null;
   }
 
@@ -457,6 +469,7 @@ public final class WebState {
           previous.state.turnLengthIndex,
           previous.state.gameOptions,
           previous.state.gameType,
+          previous.kind.equals("tutorial") ? GameState.GalaxySize.MEDIUM : previous.state.getGalaxySize(),
           this.scheduler,
           this::handleTurnTimer);
       return;
@@ -1031,6 +1044,7 @@ public final class WebState {
                                                  final int turnLengthIndex,
                                                  final GameOptions options,
                                                  final GameState.GameType requestedGameType,
+                                                 final GameState.GalaxySize galaxySize,
                                                  final ScheduledExecutorService scheduler,
                                                  final Consumer<WebGameSession> turnTimerCallback) {
       final String[] playerNames = new String[1 + aiPlayers];
@@ -1045,7 +1059,7 @@ public final class WebState {
         state.recalculateFleetProduction();
         state.recalculatePlayerFleetProduction();
       } else {
-        state = GameState.generate(turnLengthIndex, playerNames, options, requestedGameType);
+        state = GameState.generate(turnLengthIndex, playerNames, options, requestedGameType, galaxySize);
       }
 
       final WebGameSession game = new WebGameSession(kind, null, state, scheduler, turnTimerCallback);

@@ -591,6 +591,22 @@ export function GameBoard({
 
   const resolvedSignature = useMemo(() => resolvedEventSignature(resolvedEvents), [resolvedEvents]);
   const resolvedTimeline = useMemo(() => buildResolvedTimeline(resolvedEvents), [resolvedEvents]);
+  const collapseBySystem = useMemo(() => {
+    const collapsed = new Map<number, { eventIndex: number; playerIndex: number | null }>();
+
+    resolvedEvents.forEach((event, index) => {
+      if (event.kind !== 'COLLAPSE' || event.sourceIndex === null) {
+        return;
+      }
+
+      collapsed.set(event.sourceIndex, {
+        eventIndex: index,
+        playerIndex: event.playerIndex
+      });
+    });
+
+    return collapsed;
+  }, [resolvedEvents]);
   const resolvedAudioCues = useMemo(
     () => buildResolvedAudioCues(resolvedEvents, resolvedTimeline),
     [resolvedEvents, resolvedTimeline]
@@ -858,6 +874,67 @@ export function GameBoard({
       }];
     })
   ), [hexR, systemsByIndex, tannhauserLinks]);
+  const movePreviewPaths = useMemo(() => {
+    if (armedMoveSource === null) {
+      return [];
+    }
+
+    const source = systemsByIndex.get(armedMoveSource);
+    if (!source || systemHighlights.get(source.index) !== 'source') {
+      return [];
+    }
+
+    return systems.flatMap(target => {
+      if (systemHighlights.get(target.index) !== 'candidate' || source.neighbors.includes(target.index)) {
+        return [];
+      }
+
+      const path = movementPath(source, target, hexR);
+      return [{
+        key: `move-preview-${source.index}-${target.index}`,
+        curvePath: movementCurvePath(path.source, path.target, hexR)
+      }];
+    });
+  }, [armedMoveSource, hexR, systemHighlights, systems, systemsByIndex]);
+  const moveReachabilityLinks = useMemo(() => {
+    if (armedMoveSource === null) {
+      return [];
+    }
+
+    const source = systemsByIndex.get(armedMoveSource);
+    if (!source || systemHighlights.get(source.index) !== 'source') {
+      return [];
+    }
+
+    const reachable = new Set<number>([source.index]);
+    systems.forEach(system => {
+      if (systemHighlights.get(system.index) === 'candidate') {
+        reachable.add(system.index);
+      }
+    });
+
+    return linkPairs.flatMap(([fromIndex, toIndex]) => {
+      if (!reachable.has(fromIndex) || !reachable.has(toIndex)) {
+        return [];
+      }
+
+      const from = systemsByIndex.get(fromIndex);
+      const to = systemsByIndex.get(toIndex);
+      if (!from || !to) {
+        return [];
+      }
+
+      const segment = straightLinkSegment(from, to, hexR, 0.82);
+      if (segment.visibleLength <= Math.max(6, hexR * 0.08)) {
+        return [];
+      }
+
+      return [{
+        key: `move-link-${fromIndex}-${toIndex}`,
+        ...segment
+      }];
+    });
+  }, [armedMoveSource, hexR, linkPairs, systemHighlights, systems, systemsByIndex]);
 
   const displayedOwnerIndexBySystem = useMemo(() => {
     const displayed = new Map<number, number>();
@@ -888,9 +965,16 @@ export function GameBoard({
         const changeAtMs = isInstantNeutralCapture(event)
           ? instantCaptureChangeAtMs
           : resolvedTimeline.combatEndMs;
+        const collapse = collapseBySystem.get(event.systemIndex);
+        const collapsedAfterCapture = collapse !== undefined
+          && collapse.eventIndex > index
+          && collapse.playerIndex !== null
+          && event.victorIndex !== null
+          && collapse.playerIndex === event.victorIndex
+          && event.victorIndex !== event.ownerAtCombatStart;
 
         if (resolvedElapsedMs >= changeAtMs) {
-          displayed.set(event.systemIndex, event.victorIndex ?? -1);
+          displayed.set(event.systemIndex, collapsedAfterCapture ? -1 : (event.victorIndex ?? -1));
         }
         return;
       }
@@ -912,6 +996,7 @@ export function GameBoard({
     resolvedTimeline.combatStartMs,
     resolvedTimeline.moveEndMs,
     resolvedTimeline.retreatStartMs,
+    collapseBySystem,
     showResolvedEvents,
     systems
   ]);
@@ -1192,6 +1277,63 @@ export function GameBoard({
               </g>
             );
           })}
+
+          {moveReachabilityLinks.map(link => {
+            const dashArray = `${Math.max(3, hexR * 0.072)} ${Math.max(3, hexR * 0.082)}`;
+            return (
+              <g key={link.key}>
+                <line
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke={moveColor}
+                  strokeWidth={Math.max(1.8, hexR * 0.045)}
+                  strokeLinecap="round"
+                  strokeDasharray={dashArray}
+                  opacity="0.24"
+                  filter="url(#board-soft-glow)"
+                />
+                <line
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke="rgba(242, 246, 255, 0.78)"
+                  strokeWidth={Math.max(0.95, hexR * 0.022)}
+                  strokeLinecap="round"
+                  strokeDasharray={dashArray}
+                  opacity="0.88"
+                />
+              </g>
+            );
+          })}
+
+          {movePreviewPaths.map(preview => (
+            <g key={preview.key}>
+              <path
+                d={preview.curvePath}
+                pathLength={1}
+                fill="none"
+                stroke={moveColor}
+                strokeWidth={Math.max(2, hexR * 0.05)}
+                strokeLinecap="round"
+                strokeDasharray="0.04 0.055"
+                opacity="0.28"
+                filter="url(#board-soft-glow)"
+              />
+              <path
+                d={preview.curvePath}
+                pathLength={1}
+                fill="none"
+                stroke="rgba(242, 246, 255, 0.82)"
+                strokeWidth={Math.max(1.05, hexR * 0.024)}
+                strokeLinecap="round"
+                strokeDasharray="0.022 0.05"
+                opacity="0.86"
+              />
+            </g>
+          ))}
 
         </g>
 

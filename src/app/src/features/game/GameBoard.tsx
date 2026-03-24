@@ -856,46 +856,6 @@ export function GameBoard({
       }];
     })
   ), [hexR, systemsByIndex, tannhauserLinks]);
-  const moveReachabilityLinks = useMemo(() => {
-    if (armedMoveSource === null) {
-      return [];
-    }
-
-    const source = systemsByIndex.get(armedMoveSource);
-    if (!source || systemHighlights.get(source.index) !== 'source') {
-      return [];
-    }
-
-    const reachable = new Set<number>([source.index]);
-    systems.forEach(system => {
-      if (systemHighlights.get(system.index) === 'candidate') {
-        reachable.add(system.index);
-      }
-    });
-
-    return linkPairs.flatMap(([fromIndex, toIndex]) => {
-      if (!reachable.has(fromIndex) || !reachable.has(toIndex)) {
-        return [];
-      }
-
-      const from = systemsByIndex.get(fromIndex);
-      const to = systemsByIndex.get(toIndex);
-      if (!from || !to) {
-        return [];
-      }
-
-      const segment = straightLinkSegment(from, to, hexR, 0.82);
-      if (segment.visibleLength <= minimumVisibleLinkLength(hexR)) {
-        return [];
-      }
-
-      return [{
-        key: `move-link-${fromIndex}-${toIndex}`,
-        ...segment
-      }];
-    });
-  }, [armedMoveSource, hexR, linkPairs, systemHighlights, systems, systemsByIndex]);
-
   const displayedOwnerIndexBySystem = useMemo(() => {
     const displayed = new Map<number, number>();
     systems.forEach(system => displayed.set(system.index, system.ownerIndex));
@@ -1199,7 +1159,7 @@ export function GameBoard({
 
         <g pointerEvents="none">
           {visibleLinkPairs.map(link => {
-            const dashArray = `${Math.max(4, hexR * 0.095)} ${Math.max(5, hexR * 0.12)}`;
+            const dashArray = `${Math.max(3, hexR * 0.072)} ${Math.max(3, hexR * 0.082)}`;
             return (
               <g key={`lk-${link.fromIndex}-${link.toIndex}`}>
                 <line
@@ -1207,11 +1167,11 @@ export function GameBoard({
                   y1={link.source.y}
                   x2={link.target.x}
                   y2={link.target.y}
-                  stroke="rgba(146, 165, 204, 0.2)"
-                  strokeWidth={Math.max(2.4, hexR * 0.058)}
+                  stroke="rgba(170, 188, 222, 0.28)"
+                  strokeWidth={Math.max(2.2, hexR * 0.052)}
                   strokeLinecap="round"
                   strokeDasharray={dashArray}
-                  opacity="0.84"
+                  opacity="0.92"
                   filter="url(#board-soft-glow)"
                 />
                 <line
@@ -1219,42 +1179,11 @@ export function GameBoard({
                   y1={link.source.y}
                   x2={link.target.x}
                   y2={link.target.y}
-                  stroke="rgba(214, 226, 246, 0.72)"
-                  strokeWidth={Math.max(1.1, hexR * 0.026)}
+                  stroke="rgba(242, 246, 255, 0.82)"
+                  strokeWidth={Math.max(1.05, hexR * 0.024)}
                   strokeLinecap="round"
                   strokeDasharray={dashArray}
                   filter="url(#board-soft-glow)"
-                />
-              </g>
-            );
-          })}
-
-          {moveReachabilityLinks.map(link => {
-            const dashArray = `${Math.max(3, hexR * 0.072)} ${Math.max(3, hexR * 0.082)}`;
-            return (
-              <g key={link.key}>
-                <line
-                  x1={link.source.x}
-                  y1={link.source.y}
-                  x2={link.target.x}
-                  y2={link.target.y}
-                  stroke={moveColor}
-                  strokeWidth={Math.max(1.8, hexR * 0.045)}
-                  strokeLinecap="round"
-                  strokeDasharray={dashArray}
-                  opacity="0.24"
-                  filter="url(#board-soft-glow)"
-                />
-                <line
-                  x1={link.source.x}
-                  y1={link.source.y}
-                  x2={link.target.x}
-                  y2={link.target.y}
-                  stroke="rgba(242, 246, 255, 0.78)"
-                  strokeWidth={Math.max(0.95, hexR * 0.022)}
-                  strokeLinecap="round"
-                  strokeDasharray={dashArray}
-                  opacity="0.88"
                 />
               </g>
             );

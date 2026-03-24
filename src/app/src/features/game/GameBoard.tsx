@@ -1567,7 +1567,11 @@ export function GameBoard({
                   return null;
                 }
 
-                const label = event.quantity > 0 ? `-${event.quantity}` : 'X';
+                const label = event.minimumGarrisonAtCollapse > event.garrisonAtCollapse
+                  ? `${event.garrisonAtCollapse}<${event.minimumGarrisonAtCollapse}`
+                  : event.quantity > 0
+                    ? `-${event.quantity}`
+                    : 'X';
                 return (
                   <g key={`resolved-collapse-${index}`} opacity={opacity}>
                     <circle

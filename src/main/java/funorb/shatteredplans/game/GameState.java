@@ -1668,6 +1668,8 @@ public final class GameState {
       }
 
       if (system.owner != null && systemsCollapsed[system.index]) {
+        final int garrisonAtCollapse = system.garrison;
+        final int minimumGarrisonAtCollapse = system.minimumGarrison;
         int retreatTargetCount = 0;
         for (final StarSystem neighbors : system.neighbors) {
           if (system.owner == neighbors.owner && !systemsCollapsed[neighbors.index]) {
@@ -1677,7 +1679,7 @@ public final class GameState {
 
         if (retreatTargetCount == 0) {
           if (turnLog != null) {
-            turnLog.addFleetRetreatEvent(system);
+            turnLog.addFleetRetreatEvent(system, garrisonAtCollapse, minimumGarrisonAtCollapse);
           }
         } else {
           this.random.setSeed(seed ^ system.index);
@@ -1693,7 +1695,7 @@ public final class GameState {
               retreatTargets[retreatTarget].garrison++;
             }
 
-            turnLog.addFleetRetreatEvent(system, retreatTargets, retreatedFleets);
+            turnLog.addFleetRetreatEvent(system, retreatTargets, retreatedFleets, garrisonAtCollapse, minimumGarrisonAtCollapse);
           }
         }
 

@@ -504,6 +504,30 @@ export function GameScreen({
     ? 'All empires were eliminated, defeated, or resigned by the final round.'
     : 'Final campaign standings and end-of-game statistics are listed below.';
   const armedMoveSystem = armedMoveSource === null ? null : systemByIndex.get(armedMoveSource) ?? null;
+  const resolvedCollapseBanner = useMemo(() => {
+    if (!detail.classicRuleset) {
+      return null;
+    }
+
+    const collapseEvents = detail.resolvedEvents.filter(
+      event => event.kind === 'COLLAPSE' && event.sourceIndex !== null
+    );
+    if (collapseEvents.length === 0) {
+      return null;
+    }
+
+    if (collapseEvents.length === 1) {
+      const collapse = collapseEvents[0]!;
+      const systemName = systemByIndex.get(collapse.sourceIndex!)?.name ?? 'A captured system';
+      if (collapse.garrisonAtCollapse > 0 && collapse.minimumGarrisonAtCollapse > 0) {
+        return `Last turn: ${systemName} collapsed after combat. It had ${collapse.garrisonAtCollapse} fleet${collapse.garrisonAtCollapse === 1 ? '' : 's'} but needed ${collapse.minimumGarrisonAtCollapse} to hold.`;
+      }
+
+      return `Last turn: ${systemName} collapsed after combat because its end-of-turn garrison was too low to hold under classic rules.`;
+    }
+
+    return `Last turn: ${collapseEvents.length} systems collapsed after combat because their end-of-turn garrisons were below the hold requirement.`;
+  }, [detail.classicRuleset, detail.resolvedEvents, systemByIndex]);
 
   const moveTargetIndexes = useMemo(() => {
     if (!localPlayer || placementMode !== 'MOVE_FLEET_DEST' || armedMoveSource === null) return [];
@@ -865,7 +889,7 @@ export function GameScreen({
     setSelectedMoveOrderKey(null);
   };
 
-  const boardPrompt = detail.spectator
+  const defaultBoardPrompt = detail.spectator
     ? 'Spectator feed active. Track the battlefield and watch orders resolve.'
     : selectedMoveOrder
       ? `Route selected. ${modifierCopy(currentModifier)} on-map editor adjusts the route and stays active while you edit.`
@@ -890,6 +914,9 @@ export function GameScreen({
                       : selectedSystem
                         ? `Selected ${selectedSystem.name}. Click one of your systems to start routing fleets, or click an existing fleet arrow to edit that route.`
                         : 'Click one of your systems to start routing fleets, or click an existing fleet arrow to edit that route.';
+  const boardPrompt = placementMode === 'NONE' && selectedSystem === null && resolvedCollapseBanner
+    ? resolvedCollapseBanner
+    : defaultBoardPrompt;
 
   const buildActionLabel = placementMode === 'BUILD_FLEET' ? 'Cancel' : 'Place Fleets';
   const toggleChat = () => {

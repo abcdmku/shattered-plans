@@ -21,10 +21,14 @@ public final class TurnEventLog {
     this.events.add(new MoveFleetsOrder(var2, var6, var1, var5));
   }
 
-  public void addFleetRetreatEvent(final StarSystem source, final StarSystem[] targets, final int[] quantities) {
+  public void addFleetRetreatEvent(final StarSystem source,
+                                   final StarSystem[] targets,
+                                   final int[] quantities,
+                                   final int garrisonAtCollapse,
+                                   final int minimumGarrisonAtCollapse) {
     final int retreatCount = (int) Arrays.stream(quantities).filter(quantity -> quantity != 0).count();
     if (retreatCount == 0) {
-      this.events.add(new FleetRetreatEvent(source));
+      this.events.add(new FleetRetreatEvent(source, garrisonAtCollapse, minimumGarrisonAtCollapse));
     } else {
       final StarSystem[] targets2 = new StarSystem[retreatCount];
       final int[] quantities2 = new int[retreatCount];
@@ -37,12 +41,12 @@ public final class TurnEventLog {
         }
       }
 
-      this.events.add(new FleetRetreatEvent(source, targets2, quantities2));
+      this.events.add(new FleetRetreatEvent(source, targets2, quantities2, garrisonAtCollapse, minimumGarrisonAtCollapse));
     }
   }
 
-  public void addFleetRetreatEvent(final StarSystem system) {
-    this.events.add(new FleetRetreatEvent(system));
+  public void addFleetRetreatEvent(final StarSystem system, final int garrisonAtCollapse, final int minimumGarrisonAtCollapse) {
+    this.events.add(new FleetRetreatEvent(system, garrisonAtCollapse, minimumGarrisonAtCollapse));
   }
 
   public void addDefensiveNetEvent(final Player player, final StarSystem target) {

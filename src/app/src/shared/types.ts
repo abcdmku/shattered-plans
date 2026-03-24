@@ -177,6 +177,8 @@ export interface ResolvedEventSnapshot {
   victorIndex: number | null;
   fleetsAtEnd: number;
   kills: number;
+  garrisonAtCollapse: number;
+  minimumGarrisonAtCollapse: number;
 }
 
 export interface GameDetail {

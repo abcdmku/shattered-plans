@@ -813,7 +813,9 @@ public final class WebState {
       List<CombatantSnapshot> combatants,
       Integer victorIndex,
       int fleetsAtEnd,
-      int kills) {}
+      int kills,
+      int garrisonAtCollapse,
+      int minimumGarrisonAtCollapse) {}
   public record CombatantSnapshot(
       Integer playerIndex,
       Integer sourceIndex,
@@ -1489,6 +1491,8 @@ public final class WebState {
               List.of(),
               null,
               0,
+              0,
+              0,
               0));
         } else if (event instanceof final CombatEngagementLog combatLog) {
           final List<CombatantSnapshot> combatants = combatantSnapshots(combatLog);
@@ -1504,7 +1508,9 @@ public final class WebState {
               combatants,
               playerIndex(combatLog.victor),
               combatLog.fleetsAtCombatEnd,
-              combatLog.totalKills));
+              combatLog.totalKills,
+              0,
+              0));
         } else if (event instanceof final ProjectOrder projectOrder) {
           this.resolvedEvents.add(new ResolvedEventSnapshot(
               "PROJECT",
@@ -1517,6 +1523,8 @@ public final class WebState {
               null,
               List.of(),
               null,
+              0,
+              0,
               0,
               0));
         } else if (event instanceof final StellarBombEvent bombEvent) {
@@ -1532,7 +1540,9 @@ public final class WebState {
               List.of(),
               null,
               0,
-              bombEvent.kill));
+              bombEvent.kill,
+              0,
+              0));
         } else if (event instanceof final FleetRetreatEvent retreatEvent) {
           final int retreatQuantity = retreatEvent.quantities == null
               ? 0
@@ -1550,7 +1560,9 @@ public final class WebState {
               List.of(),
               null,
               0,
-              0));
+              0,
+              retreatEvent.garrisonAtCollapse,
+              retreatEvent.minimumGarrisonAtCollapse));
 
           if (retreatEvent.targets != null && retreatEvent.quantities != null) {
             for (int i = 0; i < retreatEvent.targets.length; ++i) {
@@ -1569,6 +1581,8 @@ public final class WebState {
                   List.of(),
                   null,
                   0,
+                  0,
+                  0,
                   0));
             }
           }
@@ -1584,6 +1598,8 @@ public final class WebState {
               null,
               List.of(),
               null,
+              0,
+              0,
               0,
               0));
         }

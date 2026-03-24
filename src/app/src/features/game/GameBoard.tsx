@@ -322,19 +322,17 @@ function straightLinkSegment(
   };
 }
 
+function minimumVisibleLinkLength(hexR: number): number {
+  return Math.max(6, hexR * 0.08);
+}
+
 function visibleConnectionSegment(
   source: BoardPoint,
   target: BoardPoint,
   hexR: number
 ): { source: BoardPoint; target: BoardPoint; visibleLength: number } | null {
-  // Systems placed on adjacent hexes are 200 units apart in map space; those
-  // links are already visually implicit and should not render as dashed lines.
-  if (pointDistance(source, target) <= 210) {
-    return null;
-  }
-
-  const segment = straightLinkSegment(source, target, hexR);
-  return segment.visibleLength > Math.max(8, hexR * 0.1) ? segment : null;
+  const segment = straightLinkSegment(source, target, hexR, 0.82);
+  return segment.visibleLength > minimumVisibleLinkLength(hexR) ? segment : null;
 }
 
 function movementPath(source: BoardPoint, target: BoardPoint, hexR: number): MovementPath {
@@ -591,22 +589,6 @@ export function GameBoard({
 
   const resolvedSignature = useMemo(() => resolvedEventSignature(resolvedEvents), [resolvedEvents]);
   const resolvedTimeline = useMemo(() => buildResolvedTimeline(resolvedEvents), [resolvedEvents]);
-  const collapseBySystem = useMemo(() => {
-    const collapsed = new Map<number, { eventIndex: number; playerIndex: number | null }>();
-
-    resolvedEvents.forEach((event, index) => {
-      if (event.kind !== 'COLLAPSE' || event.sourceIndex === null) {
-        return;
-      }
-
-      collapsed.set(event.sourceIndex, {
-        eventIndex: index,
-        playerIndex: event.playerIndex
-      });
-    });
-
-    return collapsed;
-  }, [resolvedEvents]);
   const resolvedAudioCues = useMemo(
     () => buildResolvedAudioCues(resolvedEvents, resolvedTimeline),
     [resolvedEvents, resolvedTimeline]
@@ -874,28 +856,6 @@ export function GameBoard({
       }];
     })
   ), [hexR, systemsByIndex, tannhauserLinks]);
-  const movePreviewPaths = useMemo(() => {
-    if (armedMoveSource === null) {
-      return [];
-    }
-
-    const source = systemsByIndex.get(armedMoveSource);
-    if (!source || systemHighlights.get(source.index) !== 'source') {
-      return [];
-    }
-
-    return systems.flatMap(target => {
-      if (systemHighlights.get(target.index) !== 'candidate' || source.neighbors.includes(target.index)) {
-        return [];
-      }
-
-      const path = movementPath(source, target, hexR);
-      return [{
-        key: `move-preview-${source.index}-${target.index}`,
-        curvePath: movementCurvePath(path.source, path.target, hexR)
-      }];
-    });
-  }, [armedMoveSource, hexR, systemHighlights, systems, systemsByIndex]);
   const moveReachabilityLinks = useMemo(() => {
     if (armedMoveSource === null) {
       return [];
@@ -925,7 +885,7 @@ export function GameBoard({
       }
 
       const segment = straightLinkSegment(from, to, hexR, 0.82);
-      if (segment.visibleLength <= Math.max(6, hexR * 0.08)) {
+      if (segment.visibleLength <= minimumVisibleLinkLength(hexR)) {
         return [];
       }
 
@@ -965,16 +925,8 @@ export function GameBoard({
         const changeAtMs = isInstantNeutralCapture(event)
           ? instantCaptureChangeAtMs
           : resolvedTimeline.combatEndMs;
-        const collapse = collapseBySystem.get(event.systemIndex);
-        const collapsedAfterCapture = collapse !== undefined
-          && collapse.eventIndex > index
-          && collapse.playerIndex !== null
-          && event.victorIndex !== null
-          && collapse.playerIndex === event.victorIndex
-          && event.victorIndex !== event.ownerAtCombatStart;
-
         if (resolvedElapsedMs >= changeAtMs) {
-          displayed.set(event.systemIndex, collapsedAfterCapture ? -1 : (event.victorIndex ?? -1));
+          displayed.set(event.systemIndex, event.victorIndex ?? -1);
         }
         return;
       }
@@ -996,7 +948,6 @@ export function GameBoard({
     resolvedTimeline.combatStartMs,
     resolvedTimeline.moveEndMs,
     resolvedTimeline.retreatStartMs,
-    collapseBySystem,
     showResolvedEvents,
     systems
   ]);
@@ -1308,33 +1259,6 @@ export function GameBoard({
               </g>
             );
           })}
-
-          {movePreviewPaths.map(preview => (
-            <g key={preview.key}>
-              <path
-                d={preview.curvePath}
-                pathLength={1}
-                fill="none"
-                stroke={moveColor}
-                strokeWidth={Math.max(2, hexR * 0.05)}
-                strokeLinecap="round"
-                strokeDasharray="0.04 0.055"
-                opacity="0.28"
-                filter="url(#board-soft-glow)"
-              />
-              <path
-                d={preview.curvePath}
-                pathLength={1}
-                fill="none"
-                stroke="rgba(242, 246, 255, 0.82)"
-                strokeWidth={Math.max(1.05, hexR * 0.024)}
-                strokeLinecap="round"
-                strokeDasharray="0.022 0.05"
-                opacity="0.86"
-              />
-            </g>
-          ))}
-
         </g>
 
         {systems.map(system => {

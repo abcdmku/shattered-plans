@@ -934,6 +934,7 @@ export function GameScreen({
         <GameBoard
           systems={detail.systems}
           players={detail.players}
+          forces={detail.forces}
           tannhauserLinks={detail.tannhauserLinks}
           orders={draftOrders}
           resolvedEvents={detail.resolvedEvents}

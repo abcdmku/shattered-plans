@@ -1615,6 +1615,31 @@ public final class GameState {
   }
 
   private void processCollapsesAndRetreats(final TurnEventLog turnLog, final int seed) {
+    StarSystem[] retreatTargets = new StarSystem[16];
+    // Combat retreats are part of the end-of-combat board state and can prevent a collapse.
+    for (final StarSystem system : this.map.systems) {
+      if (system.retreatingFleets > 0) {
+        int retreatTargetCount = 0;
+        for (final StarSystem neighbor : system.neighbors) {
+          if (neighbor.owner == system.lastOwner) {
+            retreatTargets[retreatTargetCount++] = neighbor;
+          }
+        }
+
+        if (retreatTargetCount != 0) {
+          this.random.setSeed(seed ^ system.index);
+          for (int i = 0; i < system.retreatingFleets; ++i) {
+            ++retreatTargets[ShatteredPlansClient.randomIntBounded(this.random, retreatTargetCount)].garrison;
+          }
+        }
+      }
+
+      if (system.retreatedFleets > 0
+          && system.owner == system.lastOwner) {
+        system.garrison += system.retreatedFleets;
+      }
+    }
+
     final boolean[] systemsCollapsed = new boolean[this.map.systems.length];
     boolean anySystemsCollapsed;
     do {
@@ -1633,46 +1658,23 @@ public final class GameState {
       }
     } while (anySystemsCollapsed && !this.gameOptions.noChainCollapsing);
 
-    StarSystem[] retreatTargets = new StarSystem[16];
-    for (final StarSystem system : this.map.systems) {
-      if (system.retreatingFleets > 0) {
-        int retreatTargetCount = 0;
-        for (final StarSystem neighbor : system.neighbors) {
-          if (neighbor.owner == system.lastOwner && !systemsCollapsed[neighbor.index]) {
-            retreatTargets[retreatTargetCount++] = neighbor;
-          }
-        }
-
-        if (retreatTargetCount != 0) {
-          this.random.setSeed(seed ^ system.index);
-          for (int i = 0; i < system.retreatingFleets; ++i) {
-            ++retreatTargets[ShatteredPlansClient.randomIntBounded(this.random, retreatTargetCount)].garrison;
-          }
-        }
-      }
-
-      if (system.retreatedFleets > 0
-          && system.owner == system.lastOwner
-          && !systemsCollapsed[system.index]) {
-        system.garrison += system.retreatedFleets;
-      }
-
-      if (system.owner != null) {
-        system.lastOwner = system.owner;
-      }
-    }
-
     for (final StarSystem system : this.map.systems) {
       if (retreatTargets.length < system.neighbors.length) {
         retreatTargets = new StarSystem[system.neighbors.length];
       }
 
-      if (system.owner != null && systemsCollapsed[system.index]) {
+      if (system.owner == null) {
+        continue;
+      }
+
+      final Player ownerAtCollapse = system.owner;
+      system.lastOwner = ownerAtCollapse;
+      if (systemsCollapsed[system.index]) {
         final int garrisonAtCollapse = system.garrison;
         final int minimumGarrisonAtCollapse = system.minimumGarrison;
         int retreatTargetCount = 0;
         for (final StarSystem neighbors : system.neighbors) {
-          if (system.owner == neighbors.owner && !systemsCollapsed[neighbors.index]) {
+          if (ownerAtCollapse == neighbors.owner && !systemsCollapsed[neighbors.index]) {
             retreatTargets[retreatTargetCount++] = neighbors;
           }
         }

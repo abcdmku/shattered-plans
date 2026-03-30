@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { GamePlayer, OrdersSnapshot, ResolvedEventSnapshot, SystemSnapshot, TannhauserSnapshot } from '../../shared/types';
+import type { ForceSnapshot, GamePlayer, OrdersSnapshot, ResolvedEventSnapshot, SystemSnapshot, TannhauserSnapshot } from '../../shared/types';
 import { RESOURCE_DISPLAY_META, playerAccent, playerBaseColor, shortProjectLabel } from '../../shared/game';
 import { playOriginalSound, type OriginalSoundKey } from '../../shared/audio';
 
@@ -28,6 +28,7 @@ interface AudioCue {
 interface GameBoardProps {
   systems: SystemSnapshot[];
   players: GamePlayer[];
+  forces: ForceSnapshot[];
   tannhauserLinks: TannhauserSnapshot[];
   orders: OrdersSnapshot;
   resolvedEvents: ResolvedEventSnapshot[];
@@ -53,6 +54,21 @@ interface MovementPath {
   source: BoardPoint;
   control: BoardPoint;
   target: BoardPoint;
+}
+
+interface PersistentIslandLink {
+  forceId: string;
+  fromIndex: number;
+  toIndex: number;
+  source: BoardPoint;
+  target: BoardPoint;
+  visibleLength: number;
+}
+
+interface ComponentLinkCandidate {
+  distance: number;
+  fromIndex: number;
+  toIndex: number;
 }
 
 interface ResolvedCombatantBar {
@@ -515,6 +531,7 @@ function resolvedEventSignature(events: ResolvedEventSnapshot[]): string {
 export function GameBoard({
   systems,
   players,
+  forces,
   tannhauserLinks,
   orders,
   resolvedEvents,
@@ -837,6 +854,182 @@ export function GameBoard({
       return [{ fromIndex, toIndex, ...segment }];
     });
   }, [hexR, linkPairs, systemsByIndex]);
+  const persistentIslandLinks = useMemo<PersistentIslandLink[]>(() => {
+    const results: PersistentIslandLink[] = [];
+
+    forces.forEach(force => {
+      if (force.systems.length <= 1) {
+        return;
+      }
+
+      const forceSystems = force.systems
+        .map(index => systemsByIndex.get(index) ?? null)
+        .filter((system): system is SystemSnapshot => system !== null);
+      if (forceSystems.length <= 1) {
+        return;
+      }
+
+      const forceSystemSet = new Set(forceSystems.map(system => system.index));
+      const adjacency = new Map<number, number[]>();
+
+      forceSystems.forEach(system => {
+        adjacency.set(
+          system.index,
+          system.neighbors.filter(neighborIndex => forceSystemSet.has(neighborIndex))
+        );
+      });
+
+      const visited = new Set<number>();
+      const components: number[][] = [];
+      forceSystems
+        .map(system => system.index)
+        .sort((left, right) => left - right)
+        .forEach(systemIndex => {
+          if (visited.has(systemIndex)) {
+            return;
+          }
+
+          const component: number[] = [];
+          const pending = [systemIndex];
+          visited.add(systemIndex);
+
+          while (pending.length > 0) {
+            const current = pending.pop()!;
+            component.push(current);
+
+            (adjacency.get(current) ?? [])
+              .sort((left, right) => left - right)
+              .forEach(neighborIndex => {
+                if (visited.has(neighborIndex)) {
+                  return;
+                }
+
+                visited.add(neighborIndex);
+                pending.push(neighborIndex);
+              });
+          }
+
+          component.sort((left, right) => left - right);
+          components.push(component);
+        });
+
+      if (components.length <= 1) {
+        return;
+      }
+
+      const componentCandidates: Array<{
+        leftComponentIndex: number;
+        rightComponentIndex: number;
+        distance: number;
+        fromIndex: number;
+        toIndex: number;
+      }> = [];
+
+      for (let leftIndex = 0; leftIndex < components.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < components.length; rightIndex += 1) {
+          let bestCandidate: ComponentLinkCandidate | null = null;
+
+          for (const rawFromIndex of components[leftIndex]!) {
+            for (const rawToIndex of components[rightIndex]!) {
+              const fromIndex = Math.min(rawFromIndex, rawToIndex);
+              const toIndex = Math.max(rawFromIndex, rawToIndex);
+              const from = systemsByIndex.get(fromIndex);
+              const to = systemsByIndex.get(toIndex);
+              if (!from || !to) {
+                continue;
+              }
+
+              const distance = pointDistance(from, to);
+              if (
+                !bestCandidate
+                || distance < bestCandidate.distance
+                || (distance === bestCandidate.distance && fromIndex < bestCandidate.fromIndex)
+                || (distance === bestCandidate.distance && fromIndex === bestCandidate.fromIndex && toIndex < bestCandidate.toIndex)
+              ) {
+                bestCandidate = { distance, fromIndex, toIndex };
+              }
+            }
+          }
+
+          const selectedCandidate = bestCandidate;
+          if (selectedCandidate) {
+            componentCandidates.push({
+              leftComponentIndex: leftIndex,
+              rightComponentIndex: rightIndex,
+              distance: selectedCandidate.distance,
+              fromIndex: selectedCandidate.fromIndex,
+              toIndex: selectedCandidate.toIndex
+            });
+          }
+        }
+      }
+
+      componentCandidates.sort((left, right) => (
+        left.distance - right.distance
+        || left.fromIndex - right.fromIndex
+        || left.toIndex - right.toIndex
+      ));
+
+      const parent = components.map((_, index) => index);
+      const findRoot = (index: number): number => {
+        let root = index;
+        while (parent[root] !== root) {
+          root = parent[root]!;
+        }
+        while (parent[index] !== index) {
+          const next = parent[index]!;
+          parent[index] = root;
+          index = next;
+        }
+        return root;
+      };
+
+      const union = (leftIndex: number, rightIndex: number): boolean => {
+        const leftRoot = findRoot(leftIndex);
+        const rightRoot = findRoot(rightIndex);
+        if (leftRoot === rightRoot) {
+          return false;
+        }
+
+        if (leftRoot < rightRoot) {
+          parent[rightRoot] = leftRoot;
+        } else {
+          parent[leftRoot] = rightRoot;
+        }
+        return true;
+      };
+
+      componentCandidates.forEach(candidate => {
+        if (!union(candidate.leftComponentIndex, candidate.rightComponentIndex)) {
+          return;
+        }
+
+        const from = systemsByIndex.get(candidate.fromIndex);
+        const to = systemsByIndex.get(candidate.toIndex);
+        if (!from || !to) {
+          return;
+        }
+
+        const segment = visibleConnectionSegment(from, to, hexR);
+        if (!segment) {
+          return;
+        }
+
+        results.push({
+          forceId: force.id,
+          fromIndex: candidate.fromIndex,
+          toIndex: candidate.toIndex,
+          ...segment
+        });
+      });
+    });
+
+    return results.sort((left, right) => (
+      left.forceId.localeCompare(right.forceId)
+      || left.fromIndex - right.fromIndex
+      || left.toIndex - right.toIndex
+    ));
+  }, [forces, hexR, systemsByIndex]);
   const tannhauserSegments = useMemo(() => (
     tannhauserLinks.flatMap(link => {
       const from = systemsByIndex.get(link.fromIndex);
@@ -1183,6 +1376,40 @@ export function GameBoard({
                   strokeWidth={Math.max(1.05, hexR * 0.024)}
                   strokeLinecap="round"
                   strokeDasharray={dashArray}
+                  filter="url(#board-soft-glow)"
+                />
+              </g>
+            );
+          })}
+        </g>
+
+        <g pointerEvents="none">
+          {persistentIslandLinks.map(link => {
+            const dashArray = `${Math.max(5, hexR * 0.14)} ${Math.max(4, hexR * 0.09)}`;
+            return (
+              <g key={`force-${link.forceId}-${link.fromIndex}-${link.toIndex}`}>
+                <line
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke="rgba(123, 214, 255, 0.20)"
+                  strokeWidth={Math.max(1.8, hexR * 0.04)}
+                  strokeLinecap="round"
+                  strokeDasharray={dashArray}
+                  opacity="0.86"
+                  filter="url(#board-soft-glow)"
+                />
+                <line
+                  x1={link.source.x}
+                  y1={link.source.y}
+                  x2={link.target.x}
+                  y2={link.target.y}
+                  stroke="rgba(164, 172, 184, 0.66)"
+                  strokeWidth={Math.max(0.9, hexR * 0.02)}
+                  strokeLinecap="round"
+                  strokeDasharray={dashArray}
+                  opacity="0.9"
                   filter="url(#board-soft-glow)"
                 />
               </g>

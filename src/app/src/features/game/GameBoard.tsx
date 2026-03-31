@@ -318,12 +318,21 @@ function straightLinkSegment(
   source: BoardPoint,
   target: BoardPoint,
   hexR: number,
-  insetScale = 0.94
+  insetScale = 0.94,
+  minimumVisibleLength = 0
 ): { source: BoardPoint; target: BoardPoint; visibleLength: number } {
   const direction = normalizeVector(target.x - source.x, target.y - source.y);
   const totalDistance = pointDistance(source, target);
-  const sourceInset = hexEdgeDistance(direction, hexR) * insetScale;
-  const targetInset = hexEdgeDistance({ x: -direction.x, y: -direction.y }, hexR) * insetScale;
+  let sourceInset = hexEdgeDistance(direction, hexR) * insetScale;
+  let targetInset = hexEdgeDistance({ x: -direction.x, y: -direction.y }, hexR) * insetScale;
+  const maximumCombinedInset = Math.max(0, totalDistance - minimumVisibleLength);
+  const requestedCombinedInset = sourceInset + targetInset;
+
+  if (requestedCombinedInset > maximumCombinedInset && requestedCombinedInset > 0) {
+    const insetScaleFactor = maximumCombinedInset / requestedCombinedInset;
+    sourceInset *= insetScaleFactor;
+    targetInset *= insetScaleFactor;
+  }
 
   return {
     source: {
@@ -347,8 +356,9 @@ function visibleConnectionSegment(
   target: BoardPoint,
   hexR: number
 ): { source: BoardPoint; target: BoardPoint; visibleLength: number } | null {
-  const segment = straightLinkSegment(source, target, hexR, 0.82);
-  return segment.visibleLength > minimumVisibleLinkLength(hexR) ? segment : null;
+  const minimumVisibleLength = minimumVisibleLinkLength(hexR);
+  const segment = straightLinkSegment(source, target, hexR, 0.82, minimumVisibleLength);
+  return segment.visibleLength >= minimumVisibleLength ? segment : null;
 }
 
 function movementPath(source: BoardPoint, target: BoardPoint, hexR: number): MovementPath {

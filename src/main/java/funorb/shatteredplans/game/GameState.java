@@ -1645,7 +1645,11 @@ public final class GameState {
     do {
       anySystemsCollapsed = false;
       for (final StarSystem system : this.map.systems) {
-        if (system.owner != null && !systemsCollapsed[system.index] && system.garrison < system.minimumGarrison) {
+        // A system cannot collapse on the same turn its ownership changes.
+        if (system.owner != null
+            && system.owner == system.lastOwner
+            && !systemsCollapsed[system.index]
+            && system.garrison < system.minimumGarrison) {
           systemsCollapsed[system.index] = true;
           anySystemsCollapsed = true;
 
